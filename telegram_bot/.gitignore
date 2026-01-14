@@ -1,0 +1,27 @@
+# --- Security & Privacy (CRITICAL) ---
+.env
+.env.local
+config.py
+secrets.py
+*.key
+*.pem
+
+# --- Virtual Environments ---
+venv/
+env/
+ENV/
+
+# --- Python Cache ---
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- IDE & OS Files ---
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# --- Logs & Databases ---
+*.log
+*.sqlite3
