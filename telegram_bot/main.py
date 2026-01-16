@@ -1,7 +1,11 @@
 import logging
+from telegram.ext import ApplicationBuilder, CommandHandler
 from src.core.config import Config
+# Import our new handlers
+from src.handlers.basic import start_command, help_command
+from src.handlers.crypto import price_command
 
-# Configure logging (English logs)
+# Configure logging
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
@@ -10,17 +14,22 @@ logger = logging.getLogger(__name__)
 
 def main():
     """
-    Main entry point for the Pepetopia Bot.
+    Main entry point. Initializes the bot application and registers handlers.
     """
     try:
-        logger.info("Starting Pepetopia Bot...")
-        logger.info(f"Environment: {Config.ENVIRONMENT}")
+        logger.info("Initializing Pepetopia Bot...")
         
-        # Verify if keys are loaded (Do not print the actual keys!)
-        if Config.TELEGRAM_TOKEN and Config.GEMINI_API_KEY:
-            logger.info("Security Check: API Keys loaded successfully.")
+        # 1. Build the Application using the secure Token
+        application = ApplicationBuilder().token(Config.TELEGRAM_TOKEN).build()
         
-        logger.info("Bot is ready to be built!")
+        # 2. Register Handlers (Commands)
+        # When user types /start, run start_command function
+        application.add_handler(CommandHandler("start", start_command))
+        application.add_handler(CommandHandler("help", help_command))
+        application.add_handler(CommandHandler("price", price_command))
+        # 3. Start the Bot
+        logger.info("Bot is polling... (Press Ctrl+C to stop)")
+        application.run_polling()
         
     except Exception as e:
         logger.error(f"Critical Error: {e}")

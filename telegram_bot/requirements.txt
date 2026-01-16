@@ -1,13 +1,10 @@
 # --- Core Framework ---
-# Asynchronous Telegram Bot API wrapper
-python-telegram-bot==20.7
+# Use version 21+ for Python 3.11/3.12 compatibility
+python-telegram-bot>=21.0
 
 # --- AI & LLM ---
-# Google Gemini API client
 google-generativeai==0.3.2
 
 # --- Utilities ---
-# For loading .env files securely
 python-dotenv==1.0.0
-# For making asynchronous HTTP requests (Price API)
 aiohttp==3.9.1
