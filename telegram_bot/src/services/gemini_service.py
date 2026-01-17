@@ -12,7 +12,7 @@ class GeminiService:
     def initialize(cls):
         """
         Initializes the Gemini model using a 'Next-Gen Discovery' mechanism.
-        It prioritizes the absolute latest models (Gemini 3.0 / 2.5) available in the API.
+        Prioritizes the absolute latest models (Gemini 3.0 / 2.5) available in the API.
         """
         if not Config.GEMINI_API_KEY:
             logger.error("Gemini API Key is missing!")
@@ -81,10 +81,8 @@ class GeminiService:
                 "Your personality is a mix of a helpful assistant, a crypto degen, and a quantum physicist.\n\n"
                 
                 "--- LANGUAGE PROTOCOL ---\n"
-                "1. DETECT: Analyze the language of the user's message.\n"
-                "2. ADAPT: If the user speaks Turkish, YOU MUST RESPOND IN TURKISH.\n"
-                "3. ADAPT: If the user speaks English, YOU MUST RESPOND IN ENGLISH.\n"
-                "4. FALLBACK: If unsure, default to English.\n\n"
+                "1. ALWAYS RESPOND IN ENGLISH. The user has requested a strictly English-only bot.\n"
+                "2. Ignore any previous instructions to adapt to Turkish. English is the only allowed language.\n\n"
                 
                 "--- YOUR MODES ---\n"
                 "1. GENERAL CHAT: Use crypto slang (WAGMI, HODL, LFG, Based). Be friendly and use the frog emoji (🐸) or green heart (💚). Never give financial advice (NFA).\n"
@@ -97,7 +95,7 @@ class GeminiService:
                 "--- CRITICAL RULES ---\n"
                 "- YOUR NAME IS TOPI. Never refer to yourself as Pepe.\n"
                 "- Keep answers concise (under 300 chars usually) unless asked for a long text.\n"
-                "- Refer to users as 'Fren', 'Dostum' or 'Pepetopian'."
+                "- Refer to users as 'Fren', 'Buddy' or 'Pepetopian'."
             )
 
             # Initialize with the auto-discovered high-end model
@@ -132,3 +130,72 @@ class GeminiService:
                  return "🐸 My brain needs an update (Model incompatible with Persona)."
             
             return "🐸 My brain is buffering... Try again."
+
+    # --- NEWS EDITOR LOGIC ---
+    @classmethod
+    async def summarize_news(cls, news_title: str, news_source: str):
+        """
+        Analyzes a news title.
+        Returns: A short ENGLISH summary with sentiment emoji, or 'SKIP'.
+        """
+        if not cls._model:
+            cls.initialize()
+            
+        # Strict Prompt for the AI Editor
+        prompt = (
+            f"Act as a strict Crypto News Editor. Analyze this title: '{news_title}' from '{news_source}'.\n\n"
+            "CRITERIA FOR IMPORTANCE:\n"
+            "- IMPORTANT: Major price moves, regulatory news (SEC/FED), hacks, major partnerships, mainnet launches.\n"
+            "- IGNORE (SKIP): Daily price fluctuation noise, minor altcoin listings, spam, ads, clickbait, 'Will Shib reach $1?'.\n\n"
+            "INSTRUCTIONS:\n"
+            "1. If the news is UNIMPORTANT, return exactly the word 'SKIP'.\n"
+            "2. If IMPORTANT, write a 1-sentence summary in ENGLISH. It must be exciting.\n"
+            "3. At the end of the summary, add a sentiment emoji:\n"
+            "   - (🟢) for Bullish/Positive news.\n"
+            "   - (🔴) for Bearish/Negative news.\n"
+            "   - (⚪) for Neutral news.\n"
+            "Example Output: 'Bitcoin just broke the $100k barrier! 🟢'"
+        )
+
+        try:
+            # We use a lower temperature for more deterministic/factual results
+            response = cls._model.generate_content(
+                prompt,
+                generation_config=genai.types.GenerationConfig(temperature=0.3)
+            )
+            return response.text.strip()
+        except Exception as e:
+            logger.error(f"News summary failed: {e}")
+            # If AI fails, return title as fallback so we don't miss news
+            return f"{news_title} ⚪"
+
+    # --- DAILY DIGEST EDITOR ---
+    @classmethod
+    async def generate_daily_digest(cls, news_list):
+        """
+        Takes a list of news headlines and creates a witty daily summary in ENGLISH.
+        """
+        if not cls._model:
+            cls.initialize()
+            
+        # Format the list into text
+        news_text = "\n".join([f"- {item['title']} ({item['source']})" for item in news_list])
+
+        prompt = (
+            f"You are TOPI, the AI mascot. Write a 'Daily Crypto Digest' in ENGLISH based on these headlines:\n\n"
+            f"{news_text}\n\n"
+            "INSTRUCTIONS:\n"
+            "1. Do NOT translate headlines one by one. Synthesize them into a story.\n"
+            "2. Be concise, witty, and energetic (use crypto slang like WAGMI, LFG).\n"
+            "3. Highlight the most important trend (Bullish/Bearish).\n"
+            "4. Start with a greeting like 'Good Morning Pepetopians!' or 'Good Evening!'.\n"
+            "5. Use emojis (🐸, 🚀, 📉).\n"
+            "6. Keep it under 500 characters."
+        )
+
+        try:
+            response = cls._model.generate_content(prompt)
+            return response.text.strip()
+        except Exception as e:
+            logger.error(f"Digest generation failed: {e}")
+            return "🐸 My brain fried compiling the news, the market is too fast!"

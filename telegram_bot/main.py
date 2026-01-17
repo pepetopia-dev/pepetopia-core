@@ -6,7 +6,8 @@ from src.core.config import Config
 from src.handlers.basic import start_command, help_command
 from src.handlers.crypto import price_command
 from src.handlers.ai_chat import ai_chat_handler
-from src.handlers.news_job import start_news_command, stop_news_command # NEW
+# YENİ: Sadece schedule (otopilot) komutlarını import ediyoruz
+from src.handlers.scheduled_tasks import start_schedule_command, stop_schedule_command
 
 # Configure logging
 logging.basicConfig(
@@ -26,16 +27,18 @@ def main():
         application = ApplicationBuilder().token(Config.TELEGRAM_TOKEN).build()
         
         # 2. Register Command Handlers
+        # Temel Komutlar
         application.add_handler(CommandHandler("start", start_command))
         application.add_handler(CommandHandler("help", help_command))
         application.add_handler(CommandHandler("price", price_command))
         
-        # News Feed Commands
-        application.add_handler(CommandHandler("news_on", start_news_command))
-        application.add_handler(CommandHandler("news_off", stop_news_command))
+        # Otopilot / Yayın Akışı Komutları (Eski news_on yerine bunlar geldi)
+        application.add_handler(CommandHandler("autopilot_on", start_schedule_command))
+        application.add_handler(CommandHandler("autopilot_off", stop_schedule_command))
         
         # 3. Register AI Chat Handler (MUST BE LAST)
-        # Catches text that is NOT a command
+        # Yapay zeka, yukarıdaki komutlara uymayan her şeyi yakalar.
+        # Bu yüzden en sona koyuyoruz.
         application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), ai_chat_handler))
 
         # 4. Start the Bot
