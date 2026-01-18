@@ -156,7 +156,3 @@ Distributed under the MIT License. See `LICENSE` for more information.
 <div align="center">
 <strong>Built with 💚 by the Pepetopia Dev Team</strong>
 </div>
-
-```
-
-```
