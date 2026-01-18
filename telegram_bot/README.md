@@ -1,4 +1,3 @@
-````markdown
 # 🐸 Pepetopia Bot (TOPI) Core
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue?style=for-the-badge&logo=python&logoColor=white)
@@ -55,7 +54,6 @@ Follow these steps to deploy your own instance of TOPI.
 git clone [https://github.com/pepetopia-dev/pepetopia-core.git](https://github.com/pepetopia-dev/pepetopia-core.git)
 cd pepetopia-core/telegram_bot
 ```
-````
 
 ### 2. Create Virtual Environment
 
