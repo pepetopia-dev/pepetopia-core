@@ -6,6 +6,8 @@
 ![AI](https://img.shields.io/badge/AI-Powered-green?style=for-the-badge)
 ![License](https://img.shields.io/badge/License-MIT-orange?style=for-the-badge)
 
+<br>
+
 **TOPI** is an advanced, AI-powered Telegram bot designed to protect, entertain, and inform crypto communities. Built specifically for the **Pepetopia** ecosystem on Solana, it serves as a Guardian, a Market Analyst, and a witty AI Companion.
 
 ---
@@ -43,14 +45,14 @@ Follow these steps to deploy your own instance of TOPI.
 
 ### Prerequisites
 
-- Python 3.10 or higher
-- A Telegram Bot Token (from [@BotFather](https://t.me/BotFather))
-- Google Gemini API Key (Get it [here](https://aistudio.google.com/))
+1. Python 3.10 or higher
+2. A Telegram Bot Token (from [@BotFather](https://t.me/BotFather))
+3. Google Gemini API Key (Get it [here](https://aistudio.google.com/))
 
 ### 1. Clone the Repository
 
 ```bash
-git clone [https://github.com/pepetopia-dev/pepetopia-core.git](https://github.com/pepetopia-dev/pepetopia-core.git)
+git clone https://github.com/pepetopia-dev/pepetopia-core.git
 cd pepetopia-core/telegram_bot
 ```
 ````
@@ -59,7 +61,11 @@ cd pepetopia-core/telegram_bot
 
 ```bash
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+# Activate the environment:
+# On Windows:
+venv\Scripts\activate
+# On Mac/Linux:
+source venv/bin/activate
 
 ```
 
@@ -72,11 +78,11 @@ pip install -r requirements.txt
 
 ### 4. Configuration
 
-Create a `.env` file in the `telegram_bot` directory and add your credentials:
+Create a file named `.env` inside the `telegram_bot` folder and paste the following:
+
+**File:** `telegram_bot/.env`
 
 ```env
-# telegram_bot/.env
-
 ENVIRONMENT=development
 TELEGRAM_TOKEN=YOUR_TELEGRAM_BOT_TOKEN
 GEMINI_API_KEY=YOUR_GEMINI_API_KEY
@@ -155,4 +161,5 @@ Distributed under the MIT License. See `LICENSE` for more information.
 
 ```
 
+-----
 ```
