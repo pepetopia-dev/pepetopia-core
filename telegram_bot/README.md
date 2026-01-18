@@ -1,9 +1,10 @@
+````markdown
 # 🐸 Pepetopia Bot (TOPI) Core
 
-![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
-![Telegram](https://img.shields.io/badge/Telegram-Bot%20API-blue)
-![AI](https://img.shields.io/badge/AI-Powered-green)
-![License](https://img.shields.io/badge/License-MIT-orange)
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue?style=for-the-badge&logo=python&logoColor=white)
+![Telegram](https://img.shields.io/badge/Telegram-Bot%20API-blue?style=for-the-badge&logo=telegram&logoColor=white)
+![AI](https://img.shields.io/badge/AI-Powered-green?style=for-the-badge)
+![License](https://img.shields.io/badge/License-MIT-orange?style=for-the-badge)
 
 **TOPI** is an advanced, AI-powered Telegram bot designed to protect, entertain, and inform crypto communities. Built specifically for the **Pepetopia** ecosystem on Solana, it serves as a Guardian, a Market Analyst, and a witty AI Companion.
 
@@ -52,18 +53,28 @@ Follow these steps to deploy your own instance of TOPI.
 git clone [https://github.com/pepetopia-dev/pepetopia-core.git](https://github.com/pepetopia-dev/pepetopia-core.git)
 cd pepetopia-core/telegram_bot
 ```
+````
 
 ### 2. Create Virtual Environment
 
+```bash
 python -m venv venv
-source venv/bin/activate # On Windows: venv\Scripts\activate
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+```
 
 ### 3. Install Dependencies
 
+```bash
 pip install -r requirements.txt
+
+```
 
 ### 4. Configuration
 
+Create a `.env` file in the `telegram_bot` directory and add your credentials:
+
+```env
 # telegram_bot/.env
 
 ENVIRONMENT=development
@@ -71,55 +82,77 @@ TELEGRAM_TOKEN=YOUR_TELEGRAM_BOT_TOKEN
 GEMINI_API_KEY=YOUR_GEMINI_API_KEY
 TRADING_SYMBOL=PEPETOPIA/USDT
 
+```
+
 ### 5. Run the Bot
 
+```bash
 python main.py
 
-### 🎮 Commands
+```
 
-Public Commands
+---
 
-Command,Description
-/start,Shows the main dashboard.
-/help,Displays support info.
-/price,"Live market stats (Price, Volume, Change)."
-/ca,Shows the Contract Address (Copy-Paste friendly).
-/socials,Official community links.
+## 🎮 Commands
 
-Admin Commands
-Command,Description
-/lockdown,🚨 Emergency: Locks the group (Admins only).
-/unlock,✅ Restore: Unlocks the group.
-/autopilot_on,Starts the automated news & market feed.
-/autopilot_off,Stops the automated feed.
+### Public Commands
 
-### 📂 Project Structure
+| Command    | Description                                       |
+| ---------- | ------------------------------------------------- |
+| `/start`   | Shows the main dashboard.                         |
+| `/help`    | Displays support info.                            |
+| `/price`   | Live market stats (Price, Volume, Change).        |
+| `/ca`      | Shows the Contract Address (Copy-Paste friendly). |
+| `/socials` | Official community links.                         |
 
+### Admin Commands
+
+| Command          | Description                                      |
+| ---------------- | ------------------------------------------------ |
+| `/lockdown`      | 🚨 **Emergency:** Locks the group (Admins only). |
+| `/unlock`        | ✅ **Restore:** Unlocks the group.               |
+| `/autopilot_on`  | Starts the automated news & market feed.         |
+| `/autopilot_off` | Stops the automated feed.                        |
+
+---
+
+## 📂 Project Structure
+
+```text
 telegram_bot/
 ├── src/
-│ ├── core/ # Config and environment management
-│ ├── handlers/ # Command processors (Basic, Crypto, AI, Security)
-│ ├── services/ # External APIs (Gemini, AscendEX, News)
-│ └── main.py # Entry point
-├── .env # Secrets (Not committed)
-├── requirements.txt # Python dependencies
-└── README.md # Documentation
+│   ├── core/           # Config and environment management
+│   ├── handlers/       # Command processors (Basic, Crypto, AI, Security)
+│   ├── services/       # External APIs (Gemini, AscendEX, News)
+│   └── main.py         # Entry point
+├── .env                # Secrets (Not committed)
+├── requirements.txt    # Python dependencies
+└── README.md           # Documentation
 
-### 🤝 Contributing
+```
+
+---
+
+## 🤝 Contributing
 
 We welcome contributions! Please fork the repository and submit a Pull Request.
 
-1-Fork the Project
+1. Fork the Project
+2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the Branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
 
-2-Create your Feature Branch (git checkout -b feature/AmazingFeature)
+---
 
-3-Commit your Changes (git commit -m 'Add some AmazingFeature')
+## 📄 License
 
-4-Push to the Branch (git push origin feature/AmazingFeature)
+Distributed under the MIT License. See `LICENSE` for more information.
 
-5-Open a Pull Request
+<div align="center">
+<strong>Built with 💚 by the Pepetopia Dev Team</strong>
+</div>
 
-### 📄 License
+```
 
-Distributed under the MIT License. See LICENSE for more information.
-Built with 💚 by the Pepetopia Dev Team.
+```
