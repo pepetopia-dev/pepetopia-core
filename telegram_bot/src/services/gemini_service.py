@@ -40,10 +40,10 @@ class GeminiService:
             # 🚀 TIER 1: GEMINI 3.0 Series (The Cutting Edge)
             # We look for 'flash' because it's best for Chat Bots (Speed + Quality)
             for model in available_models:
-                if "gemini-3" in model and "flash" in model:
+                """if "gemini-3" in model and "flash" in model:
                     chosen_model_name = model
                     break
-            
+                    """
             # 🚀 TIER 2: GEMINI 2.5 Series (High Performance)
             if not chosen_model_name:
                 for model in available_models:

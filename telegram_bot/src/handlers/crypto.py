@@ -8,21 +8,24 @@ logger = logging.getLogger(__name__)
 
 async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Handles the /price command using AscendEX data.
+    [Command: /price]
+    Fetches and displays live trading data from AscendEX.
     """
+    # Send 'Typing' action for better UX
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     
     symbol = Config.TRADING_SYMBOL
-    logger.info(f"DEBUG: Bot is requesting price for Symbol: '{symbol}'")
+    logger.info(f"Requesting price for Symbol: '{symbol}'")
 
     if not symbol:
-        await update.message.reply_text("⚠️ Trading Symbol not configured properly in .env")
+        await update.message.reply_text("⚠️ Configuration Error: Trading Symbol missing in .env")
         return
 
+    # Fetch Data
     data = await PriceService.get_token_info(symbol)
     
     if data:
-        # Format Variables
+        # Data Parsing
         name = data['name']
         price = data['priceUsd']
         change_pct = data['changePercent']
@@ -30,8 +33,10 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         high = data['high']
         low = data['low']
         
+        # Determine Trend Emoji
         trend_emoji = "🚀" if change_pct >= 0 else "🔻"
         
+        # Build Message
         message = (
             f"🐸 **{name} (AscendEX)**\n\n"
             f"💰 **Price:** ${price:.8f}\n"
@@ -44,4 +49,8 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await update.message.reply_text(message, parse_mode='Markdown', disable_web_page_preview=True)
     else:
-        await update.message.reply_text("⚠️ Could not fetch data from AscendEX. Check the symbol in .env")
+        await update.message.reply_text(
+            f"⚠️ **Data Unavailable**\n"
+            f"Could not fetch data for pair `{symbol}` from AscendEX.\n"
+            "Please check the symbol configuration."
+        )
