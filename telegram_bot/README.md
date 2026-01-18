@@ -159,7 +159,3 @@ Distributed under the MIT License. See `LICENSE` for more information.
 <strong>Built with 💚 by the Pepetopia Dev Team</strong>
 </div>
 
-```
-
------
-```
