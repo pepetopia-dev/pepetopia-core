@@ -52,7 +52,7 @@ Follow these steps to deploy your own instance of TOPI.
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/pepetopia-dev/pepetopia-core.git
+git clone [https://github.com/pepetopia-dev/pepetopia-core.git](https://github.com/pepetopia-dev/pepetopia-core.git)
 cd pepetopia-core/telegram_bot
 ```
 ````
@@ -159,3 +159,6 @@ Distributed under the MIT License. See `LICENSE` for more information.
 <strong>Built with 💚 by the Pepetopia Dev Team</strong>
 </div>
 
+```
+
+```
