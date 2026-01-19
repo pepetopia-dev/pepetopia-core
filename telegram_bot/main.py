@@ -7,6 +7,16 @@ and starts the polling loop. It serves as the central nervous system of the bot.
 Author: Pepetopia Dev Team
 Version: 1.0.0
 """
+# --- PATH FIX (CRITICAL) ---
+import logging
+import sys
+import os
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.append(current_dir) 
+sys.path.append(parent_dir)
+# ---------------------------
 from keep_alive import keep_alive
 import logging
 from telegram.ext import (
