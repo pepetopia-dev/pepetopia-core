@@ -1,34 +1,30 @@
 """
 TOPI (Pepetopia Bot) - Main Entry Point
 ---------------------------------------
-This module initializes the Telegram Bot application, registers all event handlers,
-and starts the polling loop. It serves as the central nervous system of the bot.
-
 Author: Pepetopia Dev Team
-Version: 1.0.0
+Version: 1.0.3 (Render Fix Edition)
 """
-# --- PATH FIX (CRITICAL) ---
+
 import logging
 import sys
 import os
 
+# --- PATH CONFIGURATION (CRITICAL FIX) ---
+
 current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-# ---------------------------
+
+src_dir = os.path.join(current_dir, "src")
+
+
+if src_dir not in sys.path:
+    sys.path.insert(0, src_dir)
+
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
-if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
 
-# Debug: Render loglarında klasör yapısını görmek için
-print(f"📂 Current Work Dir: {os.getcwd()}")
-print(f"📂 Script Dir: {current_dir}")
-print(f"📂 Sys Path: {sys.path}")
-try:
-    print(f"📂 Files in {current_dir}: {os.listdir(current_dir)}")
-except Exception:
-    pass
-# ---------------------------
+
+print(f"📂 Sys Path Adjusted: {sys.path}")
+# -----------------------------------------
 
 from telegram.ext import (
     ApplicationBuilder, 
@@ -38,41 +34,45 @@ from telegram.ext import (
     filters
 )
 
-# --- IMPORT FIX ---
-# src klasörünü bulamazsa alternatif yolları dener
+# --- IMPORTS ---
+
 try:
-    # 1. Normal Import Denemesi
-    from src.core.config import Config
-    from src.handlers.basic import start_command, help_command, ca_command, socials_command
-    from src.handlers.crypto import price_command
-    from src.handlers.ai_chat import ai_chat_handler
-    from src.handlers.scheduled_tasks import start_schedule_command, stop_schedule_command
-    from src.handlers.security import welcome_new_member, verify_callback
-    from src.handlers.moderation import moderation_handler, lockdown_command, unlock_command
-    print("✅ 'src' imports successful.")
-except ModuleNotFoundError as e:
-    print(f"⚠️ 'src' import failed ({e}). Trying fallback imports...")
-    # 2. Eğer src klasörü yoksa ve klasörler dışarı çıkarılmışsa:
+    
+    from core.config import Config
+    from handlers.basic import start_command, help_command, ca_command, socials_command
+    from handlers.crypto import price_command
+    from handlers.ai_chat import ai_chat_handler
+    from handlers.scheduled_tasks import start_schedule_command, stop_schedule_command
+    from handlers.security import welcome_new_member, verify_callback
+    from handlers.moderation import moderation_handler, lockdown_command, unlock_command
+    print("✅ Imports successful via Direct Path (e.g., 'from core...').")
+
+except ImportError:
+    print("⚠️ Direct import failed. Trying 'src.' prefix...")
     try:
-        from core.config import Config
-        from handlers.basic import start_command, help_command, ca_command, socials_command
-        from handlers.crypto import price_command
-        from handlers.ai_chat import ai_chat_handler
-        from handlers.scheduled_tasks import start_schedule_command, stop_schedule_command
-        from handlers.security import welcome_new_member, verify_callback
-        from handlers.moderation import moderation_handler, lockdown_command, unlock_command
-        print("✅ Fallback imports successful (Flattened structure detected).")
-    except Exception as e2:
-        print("❌ CRITICAL IMPORT ERROR! Could not find modules in 'src' or root.")
-        print(f"Error 1: {e}")
-        print(f"Error 2: {e2}")
-        raise e2
+        
+        from src.core.config import Config
+        from src.handlers.basic import start_command, help_command, ca_command, socials_command
+        from src.handlers.crypto import price_command
+        from src.handlers.ai_chat import ai_chat_handler
+        from src.handlers.scheduled_tasks import start_schedule_command, stop_schedule_command
+        from src.handlers.security import welcome_new_member, verify_callback
+        from src.handlers.moderation import moderation_handler, lockdown_command, unlock_command
+        print("✅ Imports successful via 'src.' Prefix.")
+    except ImportError as e:
+        print("❌ CRITICAL IMPORT ERROR! Could not find modules.")
+        print(f"Details: {e}")
+        
+        try:
+            print(f"📂 Files in {src_dir}: {os.listdir(src_dir)}")
+        except:
+            print(f"⚠️ Could not list files in {src_dir}")
+        raise e
 
 # Keep Alive (Render Web Service için)
 try:
     from keep_alive import keep_alive
 except ImportError:
-    # Eğer keep_alive.py bulunamazsa botun çökmesini engelle
     print("⚠️ keep_alive.py not found. Running without web server.")
     def keep_alive(): pass
 
@@ -85,74 +85,54 @@ logger = logging.getLogger(__name__)
 
 def main():
     """
-    Initializes the bot application, registers handlers in priority order,
-    and starts the polling loop.
+    Initializes the bot application.
     """
     try:
-        logger.info("🚀 Initializing Pepetopia Bot (TOPI) Systems...")
+        logger.info("🚀 Initializing Pepetopia Bot (TOPI)...")
         
-        # 1. Build the Application using the secure Token from Config
+        if not Config.TELEGRAM_TOKEN:
+            logger.critical("❌ TELEGRAM_TOKEN is missing! Check Environment Variables.")
+            return
+
+        # 1. Build Application
         application = ApplicationBuilder().token(Config.TELEGRAM_TOKEN).build()
         
-        # --- HANDLER REGISTRATION ---
-
-        # SECTION A: Public User Commands
-        # -------------------------------
+        # --- HANDLERS ---
+        # Public Commands
         application.add_handler(CommandHandler("start", start_command))
         application.add_handler(CommandHandler("help", help_command))
         application.add_handler(CommandHandler("price", price_command))
-        
-        # Info Commands (with Aliases)
         application.add_handler(CommandHandler("ca", ca_command))
-        application.add_handler(CommandHandler("contract", ca_command)) # Alias
+        application.add_handler(CommandHandler("contract", ca_command)) 
         application.add_handler(CommandHandler("socials", socials_command))
-        application.add_handler(CommandHandler("website", socials_command)) # Alias
+        application.add_handler(CommandHandler("website", socials_command))
 
-        # SECTION B: Admin & Security Commands
-        # ------------------------------------
+        # Admin Commands
         application.add_handler(CommandHandler("lockdown", lockdown_command))
         application.add_handler(CommandHandler("unlock", unlock_command))
-        
-        # Autopilot (News/Market Data Scheduler)
         application.add_handler(CommandHandler("autopilot_on", start_schedule_command))
         application.add_handler(CommandHandler("autopilot_off", stop_schedule_command))
         
-        # SECTION C: Gatekeeping Events (High Priority)
-        # ---------------------------------------------
-        # 1. New Member Join Event -> Triggers Welcome & Mute
+        # Security & Gatekeeping
         application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
-        
-        # 2. Captcha Button Click -> Verifies User
         application.add_handler(CallbackQueryHandler(verify_callback, pattern="^verify_"))
         
-        # SECTION D: Message Pipelines (Text Analysis)
-        # --------------------------------------------
-        # We use 'groups' to allow multiple handlers to process the same text message independently.
-        
-        # Group 1: Moderation Layer (The Shield)
-        # Checks for bad words, spam, and links. If a violation is found, it deletes the message
-        # and stops propagation (using ApplicationHandlerStop).
-        application.add_handler(
-            MessageHandler(filters.TEXT & (~filters.COMMAND), moderation_handler), 
-            group=1
-        )
-        
-        # Group 2: AI Interaction Layer (The Brain)
-        # If the message passes moderation (Group 1), it reaches here.
-        # The AI decides whether to reply (if mentioned/DM) or stay silent.
-        application.add_handler(
-            MessageHandler(filters.TEXT & (~filters.COMMAND), ai_chat_handler), 
-            group=2
-        )
+        # Message Pipelines
+        # Group 1: Moderation
+        application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), moderation_handler), group=1)
+        # Group 2: AI Chat
+        application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), ai_chat_handler), group=2)
 
         # --- STARTUP ---
-        logger.info("✅ Bot is ready and polling... (Press Ctrl+C to stop)")
+        logger.info("✅ Bot is ready and polling...")
+        
 
         keep_alive()
+        
         application.run_polling()
         
     except Exception as e:
-        logger.critical(f"🔥 Critical System Failure: {e}")
+        logger.critical(f"🔥 Critical System Failure inside main: {e}")
 
 if __name__ == "__main__":
     main()
