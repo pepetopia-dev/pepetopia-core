@@ -7,7 +7,7 @@ and starts the polling loop. It serves as the central nervous system of the bot.
 Author: Pepetopia Dev Team
 Version: 1.0.0
 """
-from src.core.keep_alive import keep_alive
+from keep_alive import keep_alive
 import logging
 from telegram.ext import (
     ApplicationBuilder, 
