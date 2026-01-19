@@ -7,7 +7,7 @@ and starts the polling loop. It serves as the central nervous system of the bot.
 Author: Pepetopia Dev Team
 Version: 1.0.0
 """
-
+from src.core.keep_alive import keep_alive
 import logging
 from telegram.ext import (
     ApplicationBuilder, 
@@ -103,6 +103,8 @@ def main():
 
         # --- STARTUP ---
         logger.info("✅ Bot is ready and polling... (Press Ctrl+C to stop)")
+
+        keep_alive()
         application.run_polling()
         
     except Exception as e:
