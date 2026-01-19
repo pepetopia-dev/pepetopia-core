@@ -14,11 +14,22 @@ import os
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
-sys.path.append(current_dir) 
-sys.path.append(parent_dir)
 # ---------------------------
-from keep_alive import keep_alive
-import logging
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
+# Debug: Render loglarında klasör yapısını görmek için
+print(f"📂 Current Work Dir: {os.getcwd()}")
+print(f"📂 Script Dir: {current_dir}")
+print(f"📂 Sys Path: {sys.path}")
+try:
+    print(f"📂 Files in {current_dir}: {os.listdir(current_dir)}")
+except Exception:
+    pass
+# ---------------------------
+
 from telegram.ext import (
     ApplicationBuilder, 
     CommandHandler, 
@@ -26,21 +37,44 @@ from telegram.ext import (
     CallbackQueryHandler, 
     filters
 )
-from src.core.config import Config
 
-# --- IMPORT HANDLERS ---
-# 1. Basic & Info Handlers
-from src.handlers.basic import start_command, help_command, ca_command, socials_command
-# 2. Crypto Data Handlers
-from src.handlers.crypto import price_command
-# 3. AI & Chat Handlers
-from src.handlers.ai_chat import ai_chat_handler
-# 4. Scheduled Tasks (Autopilot)
-from src.handlers.scheduled_tasks import start_schedule_command, stop_schedule_command
-# 5. Security & Gatekeeping
-from src.handlers.security import welcome_new_member, verify_callback
-# 6. Moderation & Safety
-from src.handlers.moderation import moderation_handler, lockdown_command, unlock_command
+# --- IMPORT FIX ---
+# src klasörünü bulamazsa alternatif yolları dener
+try:
+    # 1. Normal Import Denemesi
+    from src.core.config import Config
+    from src.handlers.basic import start_command, help_command, ca_command, socials_command
+    from src.handlers.crypto import price_command
+    from src.handlers.ai_chat import ai_chat_handler
+    from src.handlers.scheduled_tasks import start_schedule_command, stop_schedule_command
+    from src.handlers.security import welcome_new_member, verify_callback
+    from src.handlers.moderation import moderation_handler, lockdown_command, unlock_command
+    print("✅ 'src' imports successful.")
+except ModuleNotFoundError as e:
+    print(f"⚠️ 'src' import failed ({e}). Trying fallback imports...")
+    # 2. Eğer src klasörü yoksa ve klasörler dışarı çıkarılmışsa:
+    try:
+        from core.config import Config
+        from handlers.basic import start_command, help_command, ca_command, socials_command
+        from handlers.crypto import price_command
+        from handlers.ai_chat import ai_chat_handler
+        from handlers.scheduled_tasks import start_schedule_command, stop_schedule_command
+        from handlers.security import welcome_new_member, verify_callback
+        from handlers.moderation import moderation_handler, lockdown_command, unlock_command
+        print("✅ Fallback imports successful (Flattened structure detected).")
+    except Exception as e2:
+        print("❌ CRITICAL IMPORT ERROR! Could not find modules in 'src' or root.")
+        print(f"Error 1: {e}")
+        print(f"Error 2: {e2}")
+        raise e2
+
+# Keep Alive (Render Web Service için)
+try:
+    from keep_alive import keep_alive
+except ImportError:
+    # Eğer keep_alive.py bulunamazsa botun çökmesini engelle
+    print("⚠️ keep_alive.py not found. Running without web server.")
+    def keep_alive(): pass
 
 # --- LOGGING CONFIGURATION ---
 logging.basicConfig(
