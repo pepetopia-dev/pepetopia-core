@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 try:
-    from src.core.config import Config
+    from src.core.app_config import Config
     from src.handlers.basic import start_command, help_command, ca_command, socials_command
     from src.handlers.crypto import price_command
     from src.handlers.ai_chat import ai_chat_handler

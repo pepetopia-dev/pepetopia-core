@@ -2,7 +2,7 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 from src.services.price_service import PriceService
-from src.core.config import Config
+from src.core.app_config import Config
 
 logger = logging.getLogger(__name__)
 
