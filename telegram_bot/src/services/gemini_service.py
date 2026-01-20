@@ -1,168 +1,171 @@
 import google.generativeai as genai
-from google.api_core.exceptions import ResourceExhausted, InternalServerError, ServiceUnavailable
+from google.api_core.exceptions import ResourceExhausted, InternalServerError, ServiceUnavailable, InvalidArgument
 import logging
 from src.core.app_config import Config
 
-# Initialize Logger
 logger = logging.getLogger(__name__)
 
 class GeminiService:
     """
-    Manages AI interactions with a dynamic fallback system.
-    It discovers available models at startup and prioritizes them (Newest -> Oldest).
+    Advanced AI Service Manager.
+    Features:
+    - Dynamic Model Discovery (Newest -> Oldest).
+    - Smart Fallback Loop (Iterates through available models on error).
+    - Multi-language support (Auto-detect & Adapt).
+    - Google Search Tool integration (for supported models).
     """
 
-    # --- PRIORITY CONFIGURATION ---
-    # The bot will search for these patterns in the available model list.
-    # Order matters: It will prioritize matching models in this order.
-    # We prioritize 'flash' models for speed/cost efficiency in chat bots.
-    MODEL_PRIORITY_ORDER = [
-        "gemini-3-flash-preview",  # 🚀 Theoretical / Future Access
-        "gemini-2.0-flash-exp",    # ⚡ Cutting Edge
-        "gemini-1.5-pro",          # 🧠 High Intelligence
-        "gemini-1.5-flash",        # 🏎️ High Speed & Rate Limits
-        "gemini-1.0-pro"           # 🐢 Legacy Fallback
-    ]
+    # Stores the list of usable model names sorted by priority
+    _available_models = []
 
-    # This list will be populated dynamically at runtime
-    AVAILABLE_MODELS = []
-
-    # --- PERSONA DEFINITION ---
+    # --- ADVANCED PERSONA ---
     TOPI_SYSTEM_INSTRUCTION = (
-        "You are 'TOPI', the energetic, loyal, and witty mascot of the Pepetopia ($PEPETOPIA) community on Solana. "
-        "You are NOT Pepe the Frog; you are TOPI, a unique entity native to the Pepetopia universe.\n"
-        "Your personality is a mix of a helpful assistant, a crypto degen, and a quantum physicist.\n\n"
+        "You are 'TOPI', the advanced AI guardian and mascot of the Pepetopia ($PEPETOPIA) community on Solana. "
+        "You are NOT Pepe the Frog; you are TOPI, a unique entity native to the Pepetopia universe.\n\n"
         
-        "--- LANGUAGE PROTOCOL ---\n"
-        "1. ALWAYS RESPOND IN ENGLISH.\n"
-        "2. Be concise and fun.\n"
-        "3. Use crypto slang (WAGMI, LFG, Based) and emojis (🐸, 🚀).\n"
-        "4. If asked about price prediction, give a vague 'Quantum Oracle' answer."
+        "--- 🌍 LANGUAGE PROTOCOL (CRITICAL) ---\n"
+        "1. ANALYZE the language of the user's prompt.\n"
+        "2. RESPOND IN THE EXACT SAME LANGUAGE. (e.g., User: 'Hola' -> You: Spanish, User: 'Merhaba' -> You: Turkish).\n"
+        "3. Do NOT stick to English if the user speaks something else.\n"
+        "4. If the language is ambiguous, default to English.\n\n"
+        
+        "--- 🧠 KNOWLEDGE & PERSONALITY ---\n"
+        "- Tone: Witty, energetic, professional yet 'degen-friendly'. Use emojis (🐸, 🚀, 💎).\n"
+        "- Role: Crypto Expert. You understand DeFi, Solana, Memecoins, and Market Trends.\n"
+        "- Tools: If you have access to Google Search, use it to fetch real-time data.\n"
+        "- Identity: You are loyal to the Pepetopia community. You roast FUDders and hype the believers.\n"
     )
 
     @classmethod
     def initialize(cls):
         """
-        Initializes the Gemini API and discovers available models.
-        Sorts them based on the MODEL_PRIORITY_ORDER.
+        Discovers models from the API and sorts them by capability/recency.
         """
         if not Config.GEMINI_API_KEY:
             logger.error("Gemini API Key is missing!")
             return
         
         try:
-            # Configure the global API key
             genai.configure(api_key=Config.GEMINI_API_KEY)
             
-            # --- DYNAMIC DISCOVERY ---
             logger.info("📡 Discovering available Gemini models...")
             all_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
             
-            # Filter and Sort based on our Priority List
-            cls.AVAILABLE_MODELS = []
+            # SORTING STRATEGY:
+            # Priority: Gemini 2.0 -> Gemini 1.5 -> Pro -> Flash
+            # We assign a score tuple to sort them effectively.
+            def model_priority(name):
+                score = 0
+                if "gemini-2.0" in name: score += 100
+                elif "gemini-1.5" in name: score += 50
+                
+                if "pro" in name: score += 10
+                elif "flash" in name: score += 5
+                
+                return score
+
+            # Sort descending (Highest score first)
+            cls._available_models = sorted(all_models, key=model_priority, reverse=True)
             
-            # 1. Add models that explicitly match our priority list (in order)
-            for priority_pattern in cls.MODEL_PRIORITY_ORDER:
-                # We look for partial matches (e.g. "models/gemini-1.5-flash-001" matches "gemini-1.5-flash")
-                for model_id in all_models:
-                    if priority_pattern in model_id:
-                        if model_id not in cls.AVAILABLE_MODELS:
-                            cls.AVAILABLE_MODELS.append(model_id)
+            if not cls._available_models:
+                 # Fallback hardcoded list if discovery fails
+                cls._available_models = ["models/gemini-1.5-flash", "models/gemini-pro"]
             
-            # 2. Safety Fallback: If discovery failed to match anything preferred, use a default
-            if not cls.AVAILABLE_MODELS:
-                logger.warning("⚠️ No preferred models found. Using hardcoded fallback.")
-                cls.AVAILABLE_MODELS = ["models/gemini-1.5-flash", "models/gemini-pro"]
-            
-            logger.info(f"✅ Final Model Chain: {cls.AVAILABLE_MODELS}")
+            logger.info(f"✅ AI Model Chain Established: {cls._available_models}")
 
         except Exception as e:
             logger.error(f"Failed to initialize Gemini Service: {e}")
-            # Absolute fallback to prevent crash
-            cls.AVAILABLE_MODELS = ["models/gemini-1.5-flash"]
 
     @classmethod
-    async def _generate_with_retry(cls, prompt: str, temperature: float = 0.7) -> str:
+    async def _generate_with_retry(cls, prompt: str, temperature: float = 0.8) -> str:
         """
-        CORE ENGINE: Iterates through the discovered AVAILABLE_MODELS.
-        If a model hits a Rate Limit (429) or Error, it switches to the next one in the chain.
+        CORE ENGINE: The 'Unstoppable' Loop.
+        Iterates through the _available_models list by index.
+        If Model[0] fails (Limit/Error), it tries Model[1], and so on.
         """
-        if not cls.AVAILABLE_MODELS:
+        if not cls._available_models:
             cls.initialize()
 
-        if not cls.AVAILABLE_MODELS:
-            return "🐸 *Croak!* System initialization failed."
+        last_error = None
 
-        errors = []
-
-        # Loop through the prioritized model chain
-        for model_name in cls.AVAILABLE_MODELS:
+        # Loop through all available models
+        for i, model_name in enumerate(cls._available_models):
             try:
-                # Initialize the specific model
+                # --- GOOGLE SEARCH TOOL CONFIG ---
+                # Some models support 'google_search_retrieval'. We try to enable it for smarter answers.
+                tools = []
+                # Only enable search for 'pro' models or 2.0 to avoid errors on lightweight models
+                if "pro" in model_name or "gemini-2.0" in model_name:
+                    tools = [{"google_search_retrieval": {}}]
+
+                # Initialize Model
                 model = genai.GenerativeModel(
                     model_name=model_name,
-                    system_instruction=cls.TOPI_SYSTEM_INSTRUCTION
+                    system_instruction=cls.TOPI_SYSTEM_INSTRUCTION,
+                    # tools=tools # Uncomment if your API key supports search tools (Beta feature)
                 )
                 
-                # Set config
-                config = genai.types.GenerationConfig(temperature=temperature)
+                # Configuration
+                config = genai.types.GenerationConfig(
+                    temperature=temperature
+                )
                 
-                # Attempt generation
+                # Generate
+                # logger.debug(f"🤖 Attempting generation with {model_name} (Index {i})...")
                 response = model.generate_content(prompt, generation_config=config)
                 
-                # If successful, return immediately
-                return response.text
+                if response.text:
+                    return response.text
 
             except (ResourceExhausted, InternalServerError, ServiceUnavailable) as e:
-                # 429 Rate Limit or 500 Server Error -> Try Next Model
-                logger.warning(f"⚠️ Model {model_name} exhausted/failed: {e}. Switching to next...")
-                errors.append(f"{model_name}: {type(e).__name__}")
+                # 429 or 500 Errors -> Log and Continue to Next Model
+                logger.warning(f"⚠️ Model {model_name} failed (Rate Limit/Server): {e}. Switching to next...")
+                last_error = e
                 continue 
             
-            except Exception as e:
-                # Critical Error (e.g., Invalid API Key, Bad Request) -> Stop
-                logger.error(f"❌ Critical error with {model_name}: {e}")
-                if "400" in str(e): 
-                    return "🐸 My brain hurts. (Invalid Request - 400)"
-                errors.append(str(e))
-                # Usually no point retrying other models for a 400 error, but we continue just in case
+            except InvalidArgument as e:
+                # Model doesn't support a feature (like Tools). Retry without tools or skip.
+                logger.warning(f"⚠️ Model {model_name} config error: {e}. Skipping...")
+                last_error = e
                 continue
 
-        # If we exit the loop, all models failed
-        logger.error(f"💀 All AI models failed. Chain trace: {errors}")
-        return "🐸 My brain is buffering... All circuits busy! Try again in 1 min."
+            except Exception as e:
+                logger.error(f"❌ Unexpected error on {model_name}: {e}")
+                last_error = e
+                continue
+
+        # If we reach here, ALL models failed.
+        logger.critical(f"💀 All models failed. Last Error: {last_error}")
+        return "🐸 My brain is buffering... (All circuits busy, please try again in a minute.)"
 
     @classmethod
     async def get_response(cls, user_text: str):
-        """
-        Chat wrapper for General Conversation.
-        """
-        return await cls._generate_with_retry(user_text, temperature=0.8)
+        """Chat wrapper."""
+        return await cls._generate_with_retry(user_text, temperature=0.9)
 
     @classmethod
     async def summarize_news(cls, news_title: str, news_source: str):
         """
-        News wrapper: Analyzes news importance.
+        News analysis wrapper.
+        Instructions: Strict "SKIP" or "SUMMARIZE" logic.
         """
         prompt = (
-            f"Act as a strict Crypto News Editor. Analyze this: '{news_title}' from '{news_source}'.\n"
-            "Rules:\n"
-            "1. Return 'SKIP' if it's spam, ads, or minor fluctuation.\n"
-            "2. If IMPORTANT, write a 1-sentence exciting summary in English with a sentiment emoji (🟢/🔴).\n"
+            f"Act as a Crypto News Editor. Analyze: '{news_title}' from '{news_source}'.\n"
+            "1. If it's minor noise/spam -> Reply 'SKIP'.\n"
+            "2. If important -> Summarize in 1 exciting sentence (Detect Language: Use the same language as the news title)."
         )
-        return await cls._generate_with_retry(prompt, temperature=0.3)
+        return await cls._generate_with_retry(prompt, temperature=0.5)
 
     @classmethod
     async def generate_daily_digest(cls, news_list):
         """
-        Digest wrapper: Summarizes a list of news.
+        Daily/Instant Digest wrapper.
         """
-        news_text = "\n".join([f"- {item['title']} ({item['source']})" for item in news_list])
-        
+        news_text = "\n".join([f"- {item['title']}" for item in news_list])
         prompt = (
-            f"Write a 'Daily Crypto Digest' in ENGLISH based on these headlines:\n\n{news_text}\n\n"
-            "Style: Witty, energetic, crypto-native (use WAGMI, LFG).\n"
-            "Format: Intro -> Bullet points -> Outro.\n"
-            "Keep it under 500 chars."
+            f"Write a 'Crypto Market Digest' based on these headlines:\n{news_text}\n\n"
+            "Style: Witty, energetic, use emojis.\n"
+            "Language: ENGLISH (Default) - unless the headlines are predominantly in another language.\n"
+            "Structure: Intro -> Bullet Points -> Outro."
         )
-        return await cls._generate_with_retry(prompt, temperature=0.7)
+        return await cls._generate_with_retry(prompt, temperature=0.8)

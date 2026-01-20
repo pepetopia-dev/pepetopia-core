@@ -2,60 +2,63 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
-# Logger setup
+# Initialize Logger
 logger = logging.getLogger(__name__)
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     [Command: /start]
     Entry point for the bot. Displays the main dashboard with available features.
-    
-    Args:
-        update (Update): Telegram update object.
-        context (ContextTypes.DEFAULT_TYPE): Callback context.
+    Language: Strictly English.
     """
     user = update.effective_user
     logger.info(f"User {user.id} started the bot.")
 
     # Main Welcome Message
-    # Note: Using Markdown parsing for bold/italic text
+    # We emphasize the 'Polyglot' capability (speaking all languages).
     await update.message.reply_text(
         f"🐸 **Hello {user.mention_markdown()}!**\n\n"
-        "I am **TOPI**, the guardian and AI assistant of the Pepetopia Community! 🛡️\n"
-        "How can I assist you today?\n\n"
-        "🚀 **Community Commands:**\n"
-        "• /price - Live Market Stats 📈\n"
-        "• /ca - Contract Address (Copy-Paste) 💰\n"
-        "• /socials - Official Links 🌐\n"
-        "• /autopilot_on - Start AI News Feed (DM) 🗞️\n\n"
-        "🛡️ **Security (Admins Only):**\n"
-        "• /lockdown - 🚨 Emergency Lockdown\n"
+        "I am **TOPI**, the advanced AI guardian of Pepetopia! 🛡️\n"
+        "I speak **ALL languages**. You can chat with me in Turkish, English, Spanish, etc.!\n\n"
+        
+        "🚀 **Core Commands:**\n"
+        "• /price - Live Market Stats ($PEPETOPIA) 📈\n"
+        "• /digest - ⚡ Flash Market Report (AI Powered) 🗞️\n"
+        "• /socials - Official Links & Community 🌐\n"
+        "• /ca - Contract Address 💰\n"
+        "• /autopilot_on - Start Daily News Feed 📡\n\n"
+        
+        "🛡️ **Admin Tools:**\n"
+        "• /lockdown - 🚨 Emergency Lock\n"
         "• /unlock - ✅ Restore Chat\n\n"
+        
         "🤖 **AI Companion:**\n"
-        "To chat with me, just mention my name!\n"
-        "Ex: `@Pepetopia_Bot Why is crypto dumping?`",
+        "Just tag me to chat! -> `@Pepetopia_Bot What is the sentiment?`",
         parse_mode='Markdown'
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     [Command: /help]
-    Provides support information and links to the source code/docs.
+    Provides support information.
     """
     help_text = (
         "🆘 **TOPI Help Center**\n\n"
-        "I am an automated system designed to protect and entertain the Pepetopia community.\n"
-        "If you encounter any bugs, please report them to the dev team.\n\n"
+        "**Available Features:**\n"
+        "1. **AI Chat:** Mention me (@Pepetopia_Bot) to ask anything about crypto.\n"
+        "2. **Market Data:** Use /price for live stats.\n"
+        "3. **News:** Use /digest for an instant AI summary of the market.\n"
+        "4. **Security:** I automatically mute spammers and verify new humans.\n\n"
         "🔗 **Source Code:** https://github.com/pepetopia-dev/pepetopia-core"
     )
-    await update.message.reply_text(help_text, disable_web_page_preview=True)
+    await update.message.reply_text(help_text, disable_web_page_preview=True, parse_mode='Markdown')
 
 async def ca_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     [Command: /ca or /contract]
     Returns the official Token Contract Address in monospace format for easy copying.
     """
-    # TODO: Replace with the actual Mainnet Contract Address before launch
+    # Placeholder Contract Address (Update this before Mainnet launch)
     contract_address = "7Xw...PEPETOPIA_CONTRACT_ADDRESS...SoL" 
     
     await update.message.reply_text(
@@ -70,7 +73,7 @@ async def socials_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     [Command: /socials or /website]
     Displays official social media links using Inline Buttons.
     """
-    # Button Layout Configuration
+    # Button Layout
     keyboard = [
         [
             InlineKeyboardButton("🌐 Website", url="https://pepe-topia.com/"),
