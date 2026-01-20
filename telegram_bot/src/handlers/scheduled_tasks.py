@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 # --- TIMEZONE CONFIGURATION ---
 # We explicitly set the timezone to Istanbul (UTC+3) to ensure
-# the bot runs at the correct local time regardless of the server location.
+# the bot runs at the correct local time regardless of the server location (usually UTC).
 TARGET_TIMEZONE = pytz.timezone("Europe/Istanbul")
 
 # --- 09:00 & 18:00: NEWS DIGEST JOB ---
@@ -154,7 +154,7 @@ async def start_schedule_command(update: Update, context: ContextTypes.DEFAULT_T
         logger.info(f"Removed {len(existing_jobs)} old jobs for chat {chat_id}.")
 
     # Step 2: Schedule new jobs with Timezone Awareness
-    # We use .replace(tzinfo=...) or datetime.time(..., tzinfo=...)
+    # The 'tzinfo=TARGET_TIMEZONE' argument ensures the bot uses Istanbul time.
     
     # 09:00 Morning News
     jq.run_daily(news_digest_job, datetime.time(9, 0, tzinfo=TARGET_TIMEZONE), chat_id=chat_id, name=f"sched_{chat_id}")

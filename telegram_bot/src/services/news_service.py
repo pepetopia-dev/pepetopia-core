@@ -1,8 +1,7 @@
 import feedparser
 import logging
 import random
-from datetime import datetime, timedelta
-from fake_useragent import UserAgent  # Spoofing User-Agent to bypass bot detection
+from fake_useragent import UserAgent
 
 # Initialize Logger
 logger = logging.getLogger(__name__)
@@ -39,14 +38,19 @@ class NewsService:
         """
         all_news = []
         
-        # Initialize UserAgent to mimic a real browser
-        ua = UserAgent()
-        
+        # Initialize UserAgent to mimic a real browser (Chrome, Firefox, etc.)
+        # This prevents news sites from blocking the bot request.
+        try:
+            ua = UserAgent()
+            user_agent_header = ua.random
+        except Exception:
+            # Fallback if fake-useragent fails
+            user_agent_header = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+
         for feed_url in NewsService.RSS_FEEDS:
             try:
-                # Fetch feed with a randomized User-Agent header
-                # This tricks the server into thinking we are a browser (Chrome/Firefox)
-                feed = feedparser.parse(feed_url, agent=ua.random)
+                # Fetch feed with the randomized User-Agent header
+                feed = feedparser.parse(feed_url, agent=user_agent_header)
                 
                 if not feed.entries:
                     logger.warning(f"Feed returned no entries: {feed_url}")
@@ -57,7 +61,7 @@ class NewsService:
                     all_news.append({
                         "title": entry.title,
                         "link": entry.link,
-                        # Fallback to "Crypto News" if title is missing
+                        # Fallback to "Crypto News" if the feed title is missing
                         "source": feed.feed.title if 'title' in feed.feed else "Crypto News"
                     })
             except Exception as e:

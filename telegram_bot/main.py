@@ -2,7 +2,7 @@
 TOPI (Pepetopia Bot) - Main Entry Point
 ---------------------------------------
 Author: Pepetopia Dev Team
-Version: 1.0.5 (Production Release)
+Version: 1.0.6 (Production Release - Conflict Fix)
 """
 
 import logging
@@ -67,10 +67,11 @@ def main():
         logger.info("🚀 Initializing Pepetopia Bot (TOPI)...")
         
         # --- ZOMBIE KILLER PROTOCOL ---
-        # Wait 5 seconds to ensure any previous instance (zombie process)
-        # is terminated by the platform, preventing Conflict errors.
-        logger.info("⏳ Waiting 5s for previous instance to terminate...")
-        time.sleep(5)
+        # Critical Fix for 'Conflict' Error:
+        # We wait 10 seconds to ensure any previous instance (zombie process)
+        # on Render is fully terminated before we start a new connection.
+        logger.info("⏳ Waiting 10s for previous instance to terminate...")
+        time.sleep(10)
         # ------------------------------
 
         # Validate Configuration
