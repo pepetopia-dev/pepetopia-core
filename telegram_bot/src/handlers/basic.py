@@ -15,7 +15,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"User {user.id} started the bot.")
 
     # Main Welcome Message
-    # We emphasize the 'Polyglot' capability (speaking all languages).
     await update.message.reply_text(
         f"🐸 **Hello {user.mention_markdown()}!**\n\n"
         "I am **TOPI**, the advanced AI guardian of Pepetopia! 🛡️\n"
@@ -25,30 +24,46 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /price - Live Market Stats ($PEPETOPIA) 📈\n"
         "• /digest - ⚡ Flash Market Report (AI Powered) 🗞️\n"
         "• /socials - Official Links & Community 🌐\n"
-        "• /ca - Contract Address 💰\n"
-        "• /autopilot_on - Start Daily News Feed 📡\n\n"
+        "• /ca - Contract Address 📜\n\n"
+        
+        "📡 **Auto-News Tools:**\n"
+        "• /autopilot_on - Start Daily News Feed (Every 6h)\n"
+        "• /autopilot_off - Stop Auto-News\n\n"
         
         "🛡️ **Admin Tools:**\n"
-        "• /lockdown - 🚨 Emergency Lock\n"
-        "• /unlock - ✅ Restore Chat\n\n"
+        "• /lockdown - 🚨 Lock Chat\n"
+        "• /unlock - ✅ Unlock Chat\n\n"
         
         "🤖 **AI Companion:**\n"
-        "Just tag me to chat! -> `@Pepetopia_Bot What is the sentiment?`",
+        "Just tag me to chat! -> `@Pepetopia_Bot What is the sentiment?`\n"
+        "Type /help for more info.",
         parse_mode='Markdown'
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     [Command: /help]
-    Provides support information.
+    Provides support information matching BotFather list.
     """
     help_text = (
         "🆘 **TOPI Help Center**\n\n"
-        "**Available Features:**\n"
-        "1. **AI Chat:** Mention me (@Pepetopia_Bot) to ask anything about crypto.\n"
-        "2. **Market Data:** Use /price for live stats.\n"
-        "3. **News:** Use /digest for an instant AI summary of the market.\n"
-        "4. **Security:** I automatically mute spammers and verify new humans.\n\n"
+        "**🤖 AI & Chat:**\n"
+        "• Mention me (@Pepetopia_Bot) to ask anything!\n"
+        "• I can analyze sentiment, roast portfolios, or explain crypto concepts.\n\n"
+        
+        "**📊 Market & Info:**\n"
+        "• /price - See current price, volume, and 24h change.\n"
+        "• /ca - Get the official contract address.\n"
+        "• /socials - Website, Twitter, Telegram links.\n\n"
+        
+        "**🗞️ News & Updates:**\n"
+        "• /digest - Get an instant AI summary of the market.\n"
+        "• /autopilot_on - Turn on automatic news (every 6 hours).\n"
+        "• /autopilot_off - Turn off automatic news.\n\n"
+        
+        "**🛡️ Security (Admins):**\n"
+        "• /lockdown - Close chat for non-admins.\n"
+        "• /unlock - Open chat for everyone.\n\n"
         "🔗 **Source Code:** https://github.com/pepetopia-dev/pepetopia-core"
     )
     await update.message.reply_text(help_text, disable_web_page_preview=True, parse_mode='Markdown')
@@ -59,7 +74,7 @@ async def ca_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Returns the official Token Contract Address in monospace format for easy copying.
     """
     # Placeholder Contract Address (Update this before Mainnet launch)
-    contract_address = "7Xw...PEPETOPIA_CONTRACT_ADDRESS...SoL" 
+    contract_address = "9kYJGVYTxYUVPw59hcnXG2Q6VsC1GbK4KkhHsdrDpump" 
     
     await update.message.reply_text(
         f"🐸 **Pepetopia Official Contract (CA):**\n\n"

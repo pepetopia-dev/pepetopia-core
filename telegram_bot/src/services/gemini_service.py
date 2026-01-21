@@ -11,14 +11,15 @@ class GeminiService:
     Features:
     - Dynamic Model Discovery (Newest -> Oldest).
     - Smart Fallback Loop (Iterates through available models on error).
-    - Multi-language support (Auto-detect & Adapt).
-    - Google Search Tool integration (for supported models).
+    - Multi-language support (Polyglot Persona).
+    - Optimized News Formatting.
     """
 
     # Stores the list of usable model names sorted by priority
     _available_models = []
 
-    # --- ADVANCED PERSONA ---
+    # --- ADVANCED PERSONA (POLYGLOT) ---
+    # We preserve the language adaptation logic as per product requirements.
     TOPI_SYSTEM_INSTRUCTION = (
         "You are 'TOPI', the advanced AI guardian and mascot of the Pepetopia ($PEPETOPIA) community on Solana. "
         "You are NOT Pepe the Frog; you are TOPI, a unique entity native to the Pepetopia universe.\n\n"
@@ -53,7 +54,6 @@ class GeminiService:
             
             # SORTING STRATEGY:
             # Priority: Gemini 2.0 -> Gemini 1.5 -> Pro -> Flash
-            # We assign a score tuple to sort them effectively.
             def model_priority(name):
                 score = 0
                 if "gemini-2.0" in name: score += 100
@@ -81,7 +81,6 @@ class GeminiService:
         """
         CORE ENGINE: The 'Unstoppable' Loop.
         Iterates through the _available_models list by index.
-        If Model[0] fails (Limit/Error), it tries Model[1], and so on.
         """
         if not cls._available_models:
             cls.initialize()
@@ -92,9 +91,8 @@ class GeminiService:
         for i, model_name in enumerate(cls._available_models):
             try:
                 # --- GOOGLE SEARCH TOOL CONFIG ---
-                # Some models support 'google_search_retrieval'. We try to enable it for smarter answers.
+                # Only enable search for 'pro' models or 2.0
                 tools = []
-                # Only enable search for 'pro' models or 2.0 to avoid errors on lightweight models
                 if "pro" in model_name or "gemini-2.0" in model_name:
                     tools = [{"google_search_retrieval": {}}]
 
@@ -102,29 +100,23 @@ class GeminiService:
                 model = genai.GenerativeModel(
                     model_name=model_name,
                     system_instruction=cls.TOPI_SYSTEM_INSTRUCTION,
-                    # tools=tools # Uncomment if your API key supports search tools (Beta feature)
+                    # tools=tools 
                 )
                 
-                # Configuration
-                config = genai.types.GenerationConfig(
-                    temperature=temperature
-                )
+                config = genai.types.GenerationConfig(temperature=temperature)
                 
                 # Generate
-                # logger.debug(f"🤖 Attempting generation with {model_name} (Index {i})...")
                 response = model.generate_content(prompt, generation_config=config)
                 
                 if response.text:
                     return response.text
 
             except (ResourceExhausted, InternalServerError, ServiceUnavailable) as e:
-                # 429 or 500 Errors -> Log and Continue to Next Model
                 logger.warning(f"⚠️ Model {model_name} failed (Rate Limit/Server): {e}. Switching to next...")
                 last_error = e
                 continue 
             
             except InvalidArgument as e:
-                # Model doesn't support a feature (like Tools). Retry without tools or skip.
                 logger.warning(f"⚠️ Model {model_name} config error: {e}. Skipping...")
                 last_error = e
                 continue
@@ -134,7 +126,6 @@ class GeminiService:
                 last_error = e
                 continue
 
-        # If we reach here, ALL models failed.
         logger.critical(f"💀 All models failed. Last Error: {last_error}")
         return "🐸 My brain is buffering... (All circuits busy, please try again in a minute.)"
 
@@ -160,12 +151,23 @@ class GeminiService:
     async def generate_daily_digest(cls, news_list):
         """
         Daily/Instant Digest wrapper.
+        Refined for maximum readability on Telegram (Mobile/Desktop).
         """
-        news_text = "\n".join([f"- {item['title']}" for item in news_list])
+        news_text = "\n".join([f"- {item['title']} (Source: {item['source']})" for item in news_list])
+        
         prompt = (
-            f"Write a 'Crypto Market Digest' based on these headlines:\n{news_text}\n\n"
-            "Style: Witty, energetic, use emojis.\n"
-            "Language: ENGLISH (Default) - unless the headlines are predominantly in another language.\n"
-            "Structure: Intro -> Bullet Points -> Outro."
+            f"Role: You are TOPI, the AI crypto market analyst.\n"
+            f"Task: Write a 'Crypto Market Digest' based on these headlines:\n{news_text}\n\n"
+            
+            "--- FORMATTING RULES (STRICT) ---\n"
+            "1. LANGUAGE: English ONLY (Global Edition Standard).\n"
+            "2. TONE: Witty, energetic, use emojis.\n"
+            "3. STRUCTURE & LAYOUT (Optimize for Telegram Readability):\n"
+            "   - **Intro:** A single, high-energy hook sentence.\n"
+            "   - **The Meat:** Select the top 4-5 stories. Format EXACTLY like this:\n"
+            "     • [Emoji] **HEADLINE HERE**\n"
+            "       -> [Short summary in 1 sentence]\n"
+            "   - **Outro:** A short motivational closing.\n"
+            "4. IMPORTANT: Do NOT use markdown headers (#). Use **bold** for emphasis. Keep it clean."
         )
         return await cls._generate_with_retry(prompt, temperature=0.8)

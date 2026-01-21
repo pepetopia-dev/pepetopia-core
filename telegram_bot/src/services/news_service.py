@@ -1,6 +1,7 @@
 import feedparser
 import logging
 import random
+import asyncio # Yeni eklendi
 from fake_useragent import UserAgent
 
 # Initialize Logger
@@ -9,9 +10,9 @@ logger = logging.getLogger(__name__)
 class NewsService:
     """
     Service responsible for fetching and processing crypto news from RSS feeds.
+    Optimized: Uses non-blocking execution for smoother bot performance.
     """
     
-    # List of reliable Crypto RSS Feeds
     RSS_FEEDS = [
         "https://cointelegraph.com/rss",
         "https://www.coindesk.com/arc/outboundfeeds/rss/",
@@ -21,59 +22,55 @@ class NewsService:
     ]
 
     @staticmethod
-    def get_recent_news(limit: int = 5) -> list:
+    def _fetch_feed_sync(url, agent):
         """
-        Scans all configured RSS feeds and returns a list of unique news items.
-        
-        Features:
-        - Uses random User-Agent to prevent 403 Forbidden errors.
-        - Shuffles sources to ensure diversity.
-        - Error handling for individual feed failures.
+        Internal synchronous method to be run in an executor.
+        """
+        return feedparser.parse(url, agent=agent)
 
-        Args:
-            limit (int): The maximum number of news items to return.
-
-        Returns:
-            list: A list of dictionaries containing 'title', 'link', and 'source'.
+    @staticmethod
+    async def get_recent_news(limit: int = 5) -> list:
+        """
+        Asynchronously scans RSS feeds.
+        Prevents the bot from freezing during network requests.
         """
         all_news = []
         
-        # Initialize UserAgent to mimic a real browser (Chrome, Firefox, etc.)
-        # This prevents news sites from blocking the bot request.
         try:
             ua = UserAgent()
             user_agent_header = ua.random
         except Exception:
-            # Fallback if fake-useragent fails
             user_agent_header = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 
-        for feed_url in NewsService.RSS_FEEDS:
-            try:
-                # Fetch feed with the randomized User-Agent header
-                feed = feedparser.parse(feed_url, agent=user_agent_header)
-                
-                if not feed.entries:
-                    logger.warning(f"Feed returned no entries: {feed_url}")
-                    continue
+        loop = asyncio.get_running_loop()
+        tasks = []
 
-                # Take the top 3 items from this feed to avoid spamming one source
-                for entry in feed.entries[:3]:
-                    all_news.append({
-                        "title": entry.title,
-                        "link": entry.link,
-                        # Fallback to "Crypto News" if the feed title is missing
-                        "source": feed.feed.title if 'title' in feed.feed else "Crypto News"
-                    })
-            except Exception as e:
-                logger.error(f"Failed to fetch feed {feed_url}: {e}")
+        # Create async tasks for all feeds
+        for feed_url in NewsService.RSS_FEEDS:
+            tasks.append(
+                loop.run_in_executor(None, NewsService._fetch_feed_sync, feed_url, user_agent_header)
+            )
+
+        # Run all requests in parallel (Much faster!)
+        feeds_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for feed in feeds_results:
+            if isinstance(feed, Exception) or not hasattr(feed, 'entries'):
                 continue
-        
+            
+            if not feed.entries:
+                continue
+
+            for entry in feed.entries[:3]:
+                all_news.append({
+                    "title": entry.title,
+                    "link": entry.link,
+                    "source": feed.feed.title if 'title' in feed.feed else "Crypto News"
+                })
+
         if not all_news:
             logger.warning("No news found from any source.")
             return []
 
-        # Shuffle the list to provide a mix of sources each time
         random.shuffle(all_news)
-        
-        # Return only the requested number of items
         return all_news[:limit]
