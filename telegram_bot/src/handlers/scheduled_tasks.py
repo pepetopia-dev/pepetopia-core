@@ -38,7 +38,8 @@ async def instant_news_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
     try:
         # Step 1: Fetch Data (Fail-safe)
-        news_batch = NewsService.get_recent_news(limit=6)
+        # FIX: Added 'await' because get_recent_news is now an async function
+        news_batch = await NewsService.get_recent_news(limit=6)
         
         if news_batch:
             # Update status
@@ -74,6 +75,7 @@ async def instant_news_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
     except Exception as e:
         logger.error(f"Critical Error in instant_news_command: {e}", exc_info=True)
+        # Hata durumunda kullanıcıya bilgi ver ama log detayını gösterme
         await context.bot.edit_message_text(
             chat_id=chat_id, 
             message_id=status_msg.message_id, 
@@ -92,7 +94,8 @@ async def news_digest_job(context: ContextTypes.DEFAULT_TYPE):
     
     try:
         # Fetch slightly more news for the daily digests
-        news_batch = NewsService.get_recent_news(limit=8)
+        # FIX: Added 'await' here as well
+        news_batch = await NewsService.get_recent_news(limit=8)
         
         if news_batch:
             digest_text = await GeminiService.generate_daily_digest(news_batch)
@@ -123,6 +126,7 @@ async def fear_greed_job(context: ContextTypes.DEFAULT_TYPE):
     chat_id = job.chat_id
     
     try:
+        # MarketService is still synchronous (requests lib), so no await needed here unless updated
         data = MarketService.get_fear_and_greed()
         
         if data:
@@ -216,6 +220,11 @@ async def long_short_job(context: ContextTypes.DEFAULT_TYPE):
 # =========================================
 
 async def start_schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    [Command: /autopilot_on]
+    Activates the "Autopilot" mode.
+    Schedules 5 daily broadcasts aligned with Frankfurt (Berlin) time.
+    """
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
     
@@ -228,12 +237,8 @@ async def start_schedule_command(update: Update, context: ContextTypes.DEFAULT_T
     except Exception as e:
         logger.error(f"Admin check failed: {e}")
         return
-    """
-    [Command: /autopilot_on]
-    Activates the "Autopilot" mode.
-    Schedules 5 daily broadcasts aligned with Frankfurt (Berlin) time.
-    """
-    chat_id = update.effective_chat.id
+    # ----------------------
+
     job_prefix = str(chat_id) 
 
     # Security: Remove existing jobs to prevent duplication/spam
@@ -298,9 +303,13 @@ async def start_schedule_command(update: Update, context: ContextTypes.DEFAULT_T
     logger.info(f"Autopilot started for chat {chat_id} with 5 daily jobs (Berlin Time).")
 
 async def stop_schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    [Command: /autopilot_off]
+    Deactivates all scheduled tasks for the chat.
+    """
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
-    
+
     # --- SECURITY CHECK ---
     try:
         member = await context.bot.get_chat_member(chat_id, user_id)
@@ -310,11 +319,8 @@ async def stop_schedule_command(update: Update, context: ContextTypes.DEFAULT_TY
     except Exception as e:
         logger.error(f"Admin check failed: {e}")
         return
-    """
-    [Command: /autopilot_off]
-    Deactivates all scheduled tasks for the chat.
-    """
-    chat_id = update.effective_chat.id
+    # ----------------------
+
     job_prefix = str(chat_id)
 
     # Find jobs starting with the chat_id prefix
