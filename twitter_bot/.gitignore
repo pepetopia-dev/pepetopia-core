@@ -1,0 +1,12 @@
+# Secrets & Environment
+.env
+.env.local
+__pycache__/
+*.pyc
+
+# Data persistence (Local DB)
+data/
+*.log
+
+# OS generated
+.DS_Store
