@@ -8,7 +8,6 @@ load_dotenv()
 class Config:
     """
     Central configuration management.
-    Validates that all necessary environment variables are present on startup.
     """
     
     # Security: Fail immediately if keys are missing
@@ -22,9 +21,10 @@ class Config:
 
     # Operational Constraints
     TIMEZONE = "Europe/Istanbul"
-    WORK_START_HOUR = 8  # 08:00 AM
-    WORK_END_HOUR = 1    # 01:00 AM (Next Day)
+    WORK_START_HOUR = 8 
+    WORK_END_HOUR = 1   
     
+    DEV_MODE = True
     # Nitter Instances (Failover list)
     NITTER_INSTANCES = [
         "https://nitter.net",
@@ -32,10 +32,23 @@ class Config:
         "https://nitter.privacy.com.de"
     ]
 
-    # Target Accounts
+    # TARGET ACCOUNTS STRATEGY (The 3-Layer Method)
     TARGET_ACCOUNTS = [
-        "VitalikButerin",
-        "elonmusk",
+        # 1. Tech Leaders (Technical Tone)
         "solana",
-        "cz_binance"
+        "aeyakovenko",
+        "rajgokal",
+        "VitalikButerin",
+
+        # 2. News Aggregators (Witty/Summary Tone)
+        "WatcherGuru",
+        "WhaleWire",
+        "DeItaone",
+
+        # 3. Influencers/Degens (Informal/Cultural Tone)
+        "Ansem",
+        "MustStopMurad",
+        "blknoiz06",
+        "trader1sz",
+        "ElonMusk"
     ]

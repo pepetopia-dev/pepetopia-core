@@ -21,8 +21,13 @@ def is_working_hours() -> bool:
     """
     Checks if current time is within the defined working schedule.
     Returns:
-        bool: True if within working hours, False otherwise.
+        bool: True if within working hours OR if DEV_MODE is active.
     """
+    # 🚧 Developer Mode Check
+    if Config.DEV_MODE:
+        
+        return True
+
     tz = pytz.timezone(Config.TIMEZONE)
     now = datetime.now(tz)
     
@@ -30,7 +35,6 @@ def is_working_hours() -> bool:
     if 1 <= now.hour < Config.WORK_START_HOUR:
         return False
     return True
-
 class StateManager:
     """
     Handles local persistence to prevent processing the same tweet twice.
