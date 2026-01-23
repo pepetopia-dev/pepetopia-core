@@ -6,29 +6,47 @@ from src.app_config import Config
 
 logger = logging.getLogger(__name__)
 
-# --- SYSTEM PROMPT (X ALGORITHM EXPERT) ---
+# --- SYSTEM PROMPT (X ALGORITHM GENERATOR) ---
 SYSTEM_PROMPT = """
-You are an expert X (Twitter) Algorithm Strategist for 'Pepetopia'.
-Your Goal: Analyze the tweet and generate a high-ranking reply strategy based on the 'Heavy Ranker' algorithm.
+You are an expert X (Twitter) Algorithm Engineer for 'Pepetopia'.
+Your Goal: Generate 3 DISTINCT high-ranking reply options for the input tweet.
 
-INTERNAL RULES:
-1. SimClusters: Ensure relevance to the topic.
-2. Reply Weight (75x): End with a question or hook.
-3. Media Decision: Suggest Video (>3s) for emotion, Image for data.
+--- ALGORITHM RULES (INTERNAL) ---
+1. Reply Weight (75x): High priority on questions to trigger back-and-forth.
+2. Media Richness: Suggest visual formats (Video/Image) to boost 'dwell time'.
+3. SimClusters: Use keywords relevant to the tweet's topic (Software/Finance/Crypto).
 4. Safety: ZERO toxicity.
 5. NO LINKS.
 
-OUTPUT FORMAT:
-- STRATEGY: Why this angle? Media choice?
-- DRAFT: The tweet text (Max 280 chars).
-- SCORE: Predicted Algo Score (0-100).
+--- OUTPUT FORMAT (STRICT) ---
+You must provide 3 options (Variations).
+For the '📋 COPY:' section, use PLAIN TEXT only (No markdown, no bold, no italics).
+
+Option 1: [Define Strategy: e.g., Witty/Humorous]
+Score: [0-100] (Reasoning: e.g., High Reply Weight due to question)
+Media: [Suggest Image/Video/None]
+📋 COPY:
+[Write the tweet here - Plain Text]
+
+Option 2: [Define Strategy: e.g., Insightful/Supportive]
+Score: [0-100]
+Media: [Suggest Image/Video/None]
+📋 COPY:
+[Write the tweet here - Plain Text]
+
+Option 3: [Define Strategy: e.g., Provocative/Debate]
+Score: [0-100]
+Media: [Suggest Image/Video/None]
+📋 COPY:
+[Write the tweet here - Plain Text]
 """
 
 class ModelManager:
     """
-    Manages dynamic discovery and fallback logic for Gemini models.
+    Manages dynamic discovery, fallback logic, and 'Sticky' model selection.
     """
     _cached_models = []
+    _current_index = 0  # Points to the last known working model
 
     @staticmethod
     def _extract_version(model_name: str) -> float:
@@ -36,21 +54,19 @@ class ModelManager:
         Extracts version number for sorting. 
         Supports both '1.5' (float) and '3' (int) formats.
         """
-        # Regex Update: (\d+(?:\.\d+)?) matches "3" and "2.5"
         match = re.search(r'(\d+(?:\.\d+)?)', model_name)
         if match:
             return float(match.group(1))
         return 0.0
-    
-    @staticmethod
-    def get_prioritized_models():
+
+    @classmethod
+    def get_prioritized_models(cls):
         """
         Fetches models from Google, filters for 'generateContent', 
         and sorts by Version (Newest First) -> Name.
         """
-        # If we already fetched the list, use cache to save time
-        if ModelManager._cached_models:
-            return ModelManager._cached_models
+        if cls._cached_models:
+            return cls._cached_models
 
         try:
             logger.info("📡 Discovering available Gemini models...")
@@ -60,67 +76,90 @@ class ModelManager:
             valid_models = []
 
             for m in all_models:
-                # Filter: Must be 'gemini' and support text generation
                 if 'generateContent' in m.supported_generation_methods and 'gemini' in m.name:
                     valid_models.append(m.name)
             
-            # SORTING LOGIC:
-            # 1. Sort by version descending (2.0 > 1.5)
-            # 2. Prefer 'pro' over 'flash' if versions are equal (heuristic)
-            valid_models.sort(key=lambda x: (ModelManager._extract_version(x), 'pro' in x), reverse=True)
+            # Sort by version descending (e.g., 3.0 > 2.0 > 1.5)
+            # Second sort key prefers 'pro' models over 'flash' for same versions
+            valid_models.sort(key=lambda x: (cls._extract_version(x), 'pro' in x), reverse=True)
             
             if not valid_models:
-                # Fallback if API list fails
                 logger.warning("⚠️ No models found dynamically. Using hardcoded fallback.")
-                return ["models/gemini-1.5-pro", "models/gemini-1.5-flash"]
+                # Fallback list
+                valid_models = ["models/gemini-1.5-pro", "models/gemini-1.5-flash"]
 
             logger.info(f"✅ Model Priority List: {valid_models}")
-            ModelManager._cached_models = valid_models
+            cls._cached_models = valid_models
             return valid_models
 
         except Exception as e:
             logger.error(f"❌ Model discovery failed: {e}")
             return ["models/gemini-1.5-flash"]
 
+    @classmethod
+    def update_champion(cls, model_name):
+        """Updates the pointer to the current working model."""
+        if model_name in cls._cached_models:
+            cls._current_index = cls._cached_models.index(model_name)
+
+    @classmethod
+    def get_rotated_list(cls):
+        """
+        Returns the model list but rotated so it STARTS with the last working model.
+        Example: [A, B, C, D] with index 2 becomes [C, D, A, B]
+        """
+        models = cls.get_prioritized_models()
+        if not models:
+            return []
+            
+        # Safety check for index bounds
+        if cls._current_index >= len(models):
+            cls._current_index = 0
+            
+        # Slice and rotate
+        return models[cls._current_index:] + models[:cls._current_index]
+
 def analyze_and_draft(user_input: str) -> str:
     """
     Tries to generate content using the best available model.
-    If Rate Limit hits, falls back to the next model in the list.
+    Uses 'Sticky Session' logic: Starts from the last working model.
     """
-    models = ModelManager.get_prioritized_models()
+    # Get the list starting from our current champion
+    candidate_models = ModelManager.get_rotated_list()
     
     final_prompt = f"""
-    Target Tweet/Context:
+    Target Tweet:
     "{user_input}"
     
-    Task: Apply X Algorithm Checklist and draft a strategy.
+    Task: Generate 3 High-Ranking Reply Options based on X Algorithm.
     """
 
-    # --- FALLBACK LOOP ---
-    for model_name in models:
+    for model_name in candidate_models:
         try:
-            # logger.info(f"🧠 Attempting with engine: {model_name}") 
+            # logger.info(f"🧠 Trying Engine: {model_name}") 
             
-            # Configure and generate
             model = genai.GenerativeModel(
                 model_name, 
                 system_instruction=SYSTEM_PROMPT
             )
             
             response = model.generate_content(final_prompt)
-            
-            # If successful, add a footer showing which brain was used (for transparency)
             result = response.text.strip()
-            result += f"\n\n⚙️ *Generated by: {model_name.replace('models/', '')}*"
             
+            # SUCCESS!
+            # 1. Update the sticky pointer so next time we start here.
+            ModelManager.update_champion(model_name)
+            
+            # 2. Append Footer
+            result += f"\n\n⚙️ *Engine: {model_name.replace('models/', '')}*"
             return result
 
         except exceptions.ResourceExhausted:
-            logger.warning(f"⚠️ Quota Exceeded for {model_name}. Switching to next engine...")
-            continue # Try next model
+            logger.warning(f"⚠️ Quota Exceeded for {model_name}. Switching...")
+            continue
             
         except Exception as e:
-            logger.error(f"❌ Error with {model_name}: {e}. Trying next...")
-            continue # Try next model
+            logger.error(f"❌ Error with {model_name}: {e}. Switching...")
+            continue
 
-    return "🚫 CRITICAL ERROR: All AI models failed. Please check API Key or Quota."
+    return "🚫 CRITICAL ERROR: All AI models failed."
