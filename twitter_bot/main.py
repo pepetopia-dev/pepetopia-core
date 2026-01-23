@@ -1,60 +1,89 @@
-import time
-import random
+import logging
+import asyncio
+from telegram import Update
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 from src.app_config import Config
-from src.utils import logger, is_working_hours, StateManager
-from src.rss_fetcher import fetch_latest_tweet
-from src.ai_engine import generate_reply
-from src.notifier import send_telegram_alert
+from src.ai_engine import analyze_and_draft
 
-def run_bot_cycle():
+# Configure Logging
+logging.basicConfig(
+    format='%(asctime)s - [%(levelname)s] - %(name)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Single execution cycle of the bot logic.
+    Handles the /start command.
+    Checks security (Chat ID) first.
     """
-    for user in Config.TARGET_ACCOUNTS:
-        logger.info(f"Checking timeline for: @{user}")
-        
-        tweet = fetch_latest_tweet(user)
-        
-        if tweet:
-            if StateManager.is_seen(tweet['id']):
-                logger.info(f"Tweet {tweet['id']} already processed. Skipping.")
-            else:
-                logger.info(f"New tweet found from @{user}! Generating reply...")
-                
-                # Generate AI Reply
-                reply = generate_reply(tweet['content'], user)
-                
-                # Send Alert
-                send_telegram_alert(tweet, reply)
-                
-                # Mark as seen
-                StateManager.save_tweet_id(tweet['id'])
-        
-        # Random Jitter to act human-like when fetching RSS
-        # Even though we use RSS, we don't want to spam Nitter instances
-        time.sleep(random.uniform(5, 15))
+    user_id = str(update.effective_chat.id)
+    
+    # SECURITY CHECK: Only allow the admin defined in .env
+    if user_id != Config.TELEGRAM_CHAT_ID:
+        logger.warning(f"Unauthorized access attempt from ID: {user_id}")
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="⛔ Unauthorized access.")
+        return
+
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id, 
+        text=(
+            "👋 **Pepetopia Strategic Advisor Online!**\n\n"
+            "I am ready to hack the X Algorithm.\n"
+            "Paste a tweet text or describe a context, and I will generate "
+            "a high-ranking reply strategy based on 'SimClusters' and 'Reply Weight'."
+        ),
+        parse_mode='Markdown'
+    )
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Receives text messages (Tweet content), sends to AI, and returns the strategy.
+    """
+    user_id = str(update.effective_chat.id)
+    
+    # SECURITY CHECK
+    if user_id != Config.TELEGRAM_CHAT_ID:
+        return
+
+    incoming_text = update.message.text
+    
+    # User feedback: "Thinking..."
+    processing_msg = await context.bot.send_message(
+        chat_id=update.effective_chat.id, 
+        text="🧠 **Analyzing Algorithm Factors...**"
+    )
+
+    # Process with AI
+    ai_response = analyze_and_draft(incoming_text)
+
+    # Edit the "Thinking" message with the result
+    # We use Markdown parsing for better readability, but need to be careful with AI output symbols.
+    # For safety, we'll send as plain text or basic formatting.
+    await context.bot.edit_message_text(
+        chat_id=update.effective_chat.id,
+        message_id=processing_msg.message_id,
+        text=ai_response
+    )
 
 def main():
-    logger.info("Initializing Pepetopia Twitter Sentinel...")
-    logger.info(f"Monitoring {len(Config.TARGET_ACCOUNTS)} accounts.")
+    """
+    Main entry point for the Telegram Bot.
+    """
+    logger.info("🚀 Starting Pepetopia Strategic Advisor...")
     
-    try:
-        while True:
-            if is_working_hours():
-                run_bot_cycle()
-                
-                # Wait before next full cycle (approx 5 mins)
-                wait_time = 300
-                logger.info(f"Cycle complete. Sleeping for {wait_time} seconds.")
-                time.sleep(wait_time)
-            else:
-                logger.info("Outside working hours. Sleeping for 1 hour.")
-                time.sleep(3600)
+    # Create the Application
+    application = ApplicationBuilder().token(Config.TELEGRAM_BOT_TOKEN).build()
+    
+    # Add Handlers
+    start_handler = CommandHandler('start', start)
+    message_handler = MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message)
+    
+    application.add_handler(start_handler)
+    application.add_handler(message_handler)
+    
+    # Run the bot
+    application.run_polling()
 
-    except KeyboardInterrupt:
-        logger.info("Bot stopped manually by user.")
-    except Exception as e:
-        logger.critical(f"Unexpected crash: {e}")
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

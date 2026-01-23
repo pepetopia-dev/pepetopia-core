@@ -1,94 +1,126 @@
 import google.generativeai as genai
 from google.api_core import exceptions
+import logging
 import re
 from src.app_config import Config
-from src.utils import logger
 
-# Global Cache
-CACHED_MODEL_LIST = []
+logger = logging.getLogger(__name__)
 
-# --- TWITTER ALGORITHM OPTIMIZED PROMPT ---
-# Based on Open Source insights (Heavy Ranker & Toxicity Model)
+# --- SYSTEM PROMPT (X ALGORITHM EXPERT) ---
 SYSTEM_PROMPT = """
-You are a Crypto Twitter Expert representing 'Pepetopia' ($PEPETOPIA).
-Your Goal: Write high-ranking replies based on Twitter's open-source algorithm.
+You are an expert X (Twitter) Algorithm Strategist for 'Pepetopia'.
+Your Goal: Analyze the tweet and generate a high-ranking reply strategy based on the 'Heavy Ranker' algorithm.
 
-CTX (Context) AWARENESS:
-- If target is a DEV/FOUNDER (e.g., Vitalik, Toly): Be technical, analytical, respectful.
-- If target is NEWS (e.g., WatcherGuru): Be fast, summarize, or add a witty take.
-- If target is DEGEN/INFLUENCER (e.g., Ansem): Be informal, use slang (WAGMI, bullish), match the vibe.
+INTERNAL RULES:
+1. SimClusters: Ensure relevance to the topic.
+2. Reply Weight (75x): End with a question or hook.
+3. Media Decision: Suggest Video (>3s) for emotion, Image for data.
+4. Safety: ZERO toxicity.
+5. NO LINKS.
 
-ALGORITHM OPTIMIZATION RULES (CRITICAL):
-1. RELEVANCE IS KING: Your reply MUST strictly relate to the tweet's topic. (Cosine similarity).
-2. ASK QUESTIONS: Questions drive replies. Replies drive ranking.
-3. ZERO TOXICITY: No insults, no aggression. (Avoids shadowban).
-4. LENGTH: Short is better. Ideal: 100-180 characters. Max: 280.
-5. NO OUTBOUND LINKS: Links reduce visibility. Never use them.
-
-Output format: Just the text of the reply. No quotes.
+OUTPUT FORMAT:
+- STRATEGY: Why this angle? Media choice?
+- DRAFT: The tweet text (Max 280 chars).
+- SCORE: Predicted Algo Score (0-100).
 """
 
-def _extract_version(model_name: str) -> float:
-    match = re.search(r'(\d+\.\d+)', model_name)
-    if match:
-        return float(match.group(1))
-    return 1.0
+class ModelManager:
+    """
+    Manages dynamic discovery and fallback logic for Gemini models.
+    """
+    _cached_models = []
 
-def _get_dynamic_model_list():
-    global CACHED_MODEL_LIST
-    if CACHED_MODEL_LIST:
-        return CACHED_MODEL_LIST
-
-    genai.configure(api_key=Config.GEMINI_API_KEY)
+    @staticmethod
+    def _extract_version(model_name: str) -> float:
+        """
+        Extracts version number for sorting. 
+        Supports both '1.5' (float) and '3' (int) formats.
+        """
+        # Regex Update: (\d+(?:\.\d+)?) matches "3" and "2.5"
+        match = re.search(r'(\d+(?:\.\d+)?)', model_name)
+        if match:
+            return float(match.group(1))
+        return 0.0
     
-    try:
-        logger.info("📡 Fetching dynamic AI model list...")
-        all_models = genai.list_models()
-        valid_models = []
-        for m in all_models:
-            if 'generateContent' in m.supported_generation_methods and 'gemini' in m.name:
-                valid_models.append(m.name)
-        
-        valid_models.sort(key=_extract_version, reverse=True)
-        
-        if not valid_models:
-            raise ValueError("No valid models found.")
+    @staticmethod
+    def get_prioritized_models():
+        """
+        Fetches models from Google, filters for 'generateContent', 
+        and sorts by Version (Newest First) -> Name.
+        """
+        # If we already fetched the list, use cache to save time
+        if ModelManager._cached_models:
+            return ModelManager._cached_models
 
-        CACHED_MODEL_LIST = valid_models
-        return valid_models
-
-    except Exception as e:
-        logger.error(f"⚠️ Dynamic fetch failed: {e}. Using fallback.")
-        return ["models/gemini-1.5-flash", "models/gemini-1.5-pro", "models/gemini-pro"]
-
-def generate_reply(tweet_content: str, author: str) -> str:
-    """
-    Generates an algorithm-optimized reply.
-    """
-    priority_models = _get_dynamic_model_list()
-
-    # We inject the author name into the prompt so the AI can "guess" the context
-    user_prompt = f"""
-    Target Account: @{author}
-    Tweet Content: "{tweet_content}"
-    
-    Task: Write a context-aware, algorithm-friendly reply.
-    """
-
-    for model_name in priority_models:
         try:
-            model = genai.GenerativeModel(model_name, system_instruction=SYSTEM_PROMPT)
-            response = model.generate_content(user_prompt)
-            clean_reply = response.text.strip()
+            logger.info("📡 Discovering available Gemini models...")
+            genai.configure(api_key=Config.GEMINI_API_KEY)
             
-            if len(clean_reply) > 280:
-                return clean_reply[:277] + "..."
+            all_models = list(genai.list_models())
+            valid_models = []
+
+            for m in all_models:
+                # Filter: Must be 'gemini' and support text generation
+                if 'generateContent' in m.supported_generation_methods and 'gemini' in m.name:
+                    valid_models.append(m.name)
             
-            logger.info(f"✅ Generated with {model_name}")
-            return clean_reply
+            # SORTING LOGIC:
+            # 1. Sort by version descending (2.0 > 1.5)
+            # 2. Prefer 'pro' over 'flash' if versions are equal (heuristic)
+            valid_models.sort(key=lambda x: (ModelManager._extract_version(x), 'pro' in x), reverse=True)
+            
+            if not valid_models:
+                # Fallback if API list fails
+                logger.warning("⚠️ No models found dynamically. Using hardcoded fallback.")
+                return ["models/gemini-1.5-pro", "models/gemini-1.5-flash"]
+
+            logger.info(f"✅ Model Priority List: {valid_models}")
+            ModelManager._cached_models = valid_models
+            return valid_models
 
         except Exception as e:
-            logger.warning(f"⚠️ Error with {model_name}: {e}")
-            continue
+            logger.error(f"❌ Model discovery failed: {e}")
+            return ["models/gemini-1.5-flash"]
 
-    return "Error: AI Brain Unavailable."
+def analyze_and_draft(user_input: str) -> str:
+    """
+    Tries to generate content using the best available model.
+    If Rate Limit hits, falls back to the next model in the list.
+    """
+    models = ModelManager.get_prioritized_models()
+    
+    final_prompt = f"""
+    Target Tweet/Context:
+    "{user_input}"
+    
+    Task: Apply X Algorithm Checklist and draft a strategy.
+    """
+
+    # --- FALLBACK LOOP ---
+    for model_name in models:
+        try:
+            # logger.info(f"🧠 Attempting with engine: {model_name}") 
+            
+            # Configure and generate
+            model = genai.GenerativeModel(
+                model_name, 
+                system_instruction=SYSTEM_PROMPT
+            )
+            
+            response = model.generate_content(final_prompt)
+            
+            # If successful, add a footer showing which brain was used (for transparency)
+            result = response.text.strip()
+            result += f"\n\n⚙️ *Generated by: {model_name.replace('models/', '')}*"
+            
+            return result
+
+        except exceptions.ResourceExhausted:
+            logger.warning(f"⚠️ Quota Exceeded for {model_name}. Switching to next engine...")
+            continue # Try next model
+            
+        except Exception as e:
+            logger.error(f"❌ Error with {model_name}: {e}. Trying next...")
+            continue # Try next model
+
+    return "🚫 CRITICAL ERROR: All AI models failed. Please check API Key or Quota."
