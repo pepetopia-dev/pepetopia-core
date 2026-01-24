@@ -19,6 +19,9 @@ class Config:
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
     TRADING_SYMBOL = os.getenv("TRADING_SYMBOL")
     ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+    
+    # --- NEW: Added for Persistence ---
+    MAIN_CHAT_ID = os.getenv("MAIN_CHAT_ID")
 
     @staticmethod
     def validate():
@@ -27,6 +30,8 @@ class Config:
         print(f"Looking for .env at: {ENV_PATH}")
         print(f"File exists?: {ENV_PATH.exists()}")
         print(f"TRADING_SYMBOL Value: '{Config.TRADING_SYMBOL}'")
+        # Debugging the new variable
+        print(f"MAIN_CHAT_ID Value: '{Config.MAIN_CHAT_ID}'") 
         print(f"------------------")
 
         if not Config.TELEGRAM_TOKEN:
