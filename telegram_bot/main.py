@@ -2,7 +2,7 @@
 TOPI (Pepetopia Bot) - Main Entry Point
 ---------------------------------------
 Author: Pepetopia Dev Team
-Version: 1.2.0 (Global Edition)
+Version: 1.3.0 (Global Edition + Persistence)
 """
 
 import logging
@@ -30,8 +30,13 @@ try:
     from src.handlers.basic import start_command, help_command, ca_command, socials_command
     from src.handlers.crypto import price_command
     from src.handlers.ai_chat import ai_chat_handler
-    from src.handlers.scheduled_tasks import start_schedule_command, stop_schedule_command
-    from src.handlers.scheduled_tasks import instant_news_command  # NEW: Flash News
+    # Updated Imports for Persistence
+    from src.handlers.scheduled_tasks import (
+        start_schedule_command, 
+        stop_schedule_command, 
+        instant_news_command, 
+        schedule_all_jobs  # Required for auto-start
+    )
     from src.handlers.security import welcome_new_member, verify_callback
     from src.handlers.moderation import moderation_handler, lockdown_command, unlock_command
 
@@ -54,6 +59,30 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+async def post_init(application):
+    """
+    Runs automatically after the bot starts.
+    Restores the 'Autopilot' schedule for the main chat defined in .env.
+    """
+    main_chat_id = Config.MAIN_CHAT_ID
+    
+    if main_chat_id:
+        try:
+            # Ensure chat_id is an integer
+            chat_id_int = int(main_chat_id)
+            logger.info(f"🔄 Auto-Starting Autopilot for Main Chat ID: {chat_id_int}")
+            
+            # Restore the schedule (Istanbul Time)
+            schedule_all_jobs(application.job_queue, chat_id_int)
+            
+            # Optional: Send a 'Bot is Online' message
+            # await application.bot.send_message(chat_id=chat_id_int, text="🐸 TOPI is Online! Systems Active.")
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to auto-start autopilot: {e}")
+    else:
+        logger.warning("⚠️ MAIN_CHAT_ID not set in .env. Autopilot won't start automatically.")
+
 def main():
     """
     Main execution function. Initializes the bot and starts polling.
@@ -71,8 +100,13 @@ def main():
             logger.critical("❌ TELEGRAM_TOKEN is missing! Check Environment Variables.")
             return
 
-        # Build Application
-        application = ApplicationBuilder().token(Config.TELEGRAM_TOKEN).build()
+        # Build Application with Post-Init Hook
+        application = (
+            ApplicationBuilder()
+            .token(Config.TELEGRAM_TOKEN)
+            .post_init(post_init) # <--- THIS ENABLES PERSISTENCE
+            .build()
+        )
         
         # --- REGISTER HANDLERS ---
         
@@ -86,8 +120,8 @@ def main():
         
         # 2. Market & News Commands
         application.add_handler(CommandHandler("price", price_command))
-        application.add_handler(CommandHandler("digest", instant_news_command))      # NEW
-        application.add_handler(CommandHandler("flash_news", instant_news_command))  # Alias
+        application.add_handler(CommandHandler("digest", instant_news_command))
+        application.add_handler(CommandHandler("flash_news", instant_news_command))
         
         # 3. Admin & Automation Commands
         application.add_handler(CommandHandler("lockdown", lockdown_command))
@@ -96,14 +130,13 @@ def main():
         application.add_handler(CommandHandler("autopilot_off", stop_schedule_command))
         
         # 4. Security (Gatekeeper)
-        # Handles new member joins (Mute & Verify)
         application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
         application.add_handler(CallbackQueryHandler(verify_callback, pattern="^verify_"))
         
         # 5. Message Processing (Moderation & AI)
-        # Group 1: Moderation (Runs first, can stop propagation)
+        # Group 1: Moderation (Runs first)
         application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), moderation_handler), group=1)
-        # Group 2: AI Chat (Runs if not stopped by moderation)
+        # Group 2: AI Chat (Runs if not stopped)
         application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), ai_chat_handler), group=2)
 
         logger.info("✅ Bot is ready and polling...")

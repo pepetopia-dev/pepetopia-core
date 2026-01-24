@@ -2,18 +2,18 @@ import logging
 import datetime
 import pytz
 from telegram import Update
-from telegram.ext import ContextTypes
+from telegram.ext import ContextTypes, JobQueue
 from src.services.news_service import NewsService
 from src.services.gemini_service import GeminiService
 from src.services.market_service import MarketService
 
-# Initialize Logger with standard naming convention
+# Initialize Logger
 logger = logging.getLogger(__name__)
 
 # --- CONFIGURATION ---
-# Server Location: Frankfurt (Europe/Berlin)
-# We align schedules to human activity in this timezone.
-TIMEZONE_BERLIN = pytz.timezone("Europe/Berlin")
+# Timezone: Istanbul (UTC+3)
+# Selected to align with the target audience's activity hours.
+TIMEZONE_TARGET = pytz.timezone("Europe/Istanbul")
 
 # =========================================
 # SECTION 1: TASK HANDLERS (Workers)
@@ -23,90 +23,74 @@ async def instant_news_command(update: Update, context: ContextTypes.DEFAULT_TYP
     """
     [Command: /digest]
     Triggers an immediate AI-powered market news digest.
-    Standard: Silicon Valley (High availability, user feedback).
     """
     chat_id = update.effective_chat.id
     
-    # UX: Send typing action to indicate processing
+    # Send typing action for UX
     await context.bot.send_chat_action(chat_id=chat_id, action="typing")
-    
-    # UX: Interim status message
-    status_msg = await update.message.reply_text(
-        "🕵️‍♂️ **Scanning the global market...**", 
-        parse_mode='Markdown'
-    )
+    status_msg = await update.message.reply_text("🕵️‍♂️ **Scanning the market...**", parse_mode='Markdown')
 
     try:
-        # Step 1: Fetch Data (Fail-safe)
-        # FIX: Added 'await' because get_recent_news is now an async function
+        # Fetch news asynchronously
         news_batch = await NewsService.get_recent_news(limit=6)
         
         if news_batch:
-            # Update status
             await context.bot.edit_message_text(
                 chat_id=chat_id, 
                 message_id=status_msg.message_id, 
-                text="🧠 **TOPI is synthesizing intelligence...**", 
+                text="🧠 **Synthesizing data...**", 
                 parse_mode='Markdown'
             )
             
-            # Step 2: AI Processing
-            # Note: The prompt inside GeminiService must enforce English output.
+            # Generate Digest
             digest_text = await GeminiService.generate_daily_digest(news_batch)
             
-            # Step 3: Delivery
-            # Using Markdown for bolding headers.
             message = (
                 f"⚡ **TOPI FLASH REPORT** ⚡\n\n"
                 f"{digest_text}\n\n"
                 f"📢 #Pepetopia #CryptoNews"
             )
             
-            # Cleanup status and send final report
             await context.bot.delete_message(chat_id=chat_id, message_id=status_msg.message_id)
             await context.bot.send_message(chat_id=chat_id, text=message, parse_mode='Markdown')
         else:
             await context.bot.edit_message_text(
                 chat_id=chat_id, 
                 message_id=status_msg.message_id, 
-                text="⚠️ **System Notice:** No significant news found at this moment.", 
+                text="⚠️ **System Notice:** No significant news found.", 
                 parse_mode='Markdown'
             )
 
     except Exception as e:
         logger.error(f"Critical Error in instant_news_command: {e}", exc_info=True)
-        # Hata durumunda kullanıcıya bilgi ver ama log detayını gösterme
         await context.bot.edit_message_text(
             chat_id=chat_id, 
             message_id=status_msg.message_id, 
-            text="⚠️ **System Error:** Unable to retrieve intelligence. Devs notified.", 
+            text="⚠️ **System Error:** Unable to retrieve data.", 
             parse_mode='Markdown'
         )
 
 async def news_digest_job(context: ContextTypes.DEFAULT_TYPE):
     """
     [Scheduled Job]
-    Fetches news, generates an AI summary, and broadcasts it.
-    Differentiates between Morning and Evening editions.
+    Fetches news and broadcasts Morning/Evening editions.
     """
     job = context.job
     chat_id = job.chat_id
     
     try:
-        # Fetch slightly more news for the daily digests
-        # FIX: Added 'await' here as well
         news_batch = await NewsService.get_recent_news(limit=8)
         
         if news_batch:
             digest_text = await GeminiService.generate_daily_digest(news_batch)
             
-            # Dynamic Title based on Job Name
+            # Determine edition based on job name
             edition = "🌞 MORNING EDITION" if "morning" in job.name else "🌙 EVENING EDITION"
             
             message = (
                 f"🗞️ **TOPI DAILY DIGEST | {edition}**\n\n"
                 f"{digest_text}\n\n"
-                f"📢 #Pepetopia #Crypto #Solana"
+                f"📢 #Pepetopia #Crypto"
             )
             
             await context.bot.send_message(chat_id=chat_id, text=message, parse_mode='Markdown')
@@ -126,23 +110,20 @@ async def fear_greed_job(context: ContextTypes.DEFAULT_TYPE):
     chat_id = job.chat_id
     
     try:
-        # MarketService is still synchronous (requests lib), so no await needed here unless updated
         data = MarketService.get_fear_and_greed()
         
         if data:
             value = int(data['value'])
             classification = data['value_classification']
             
-            # AI Persona Logic (English)
+            # AI Commentary Logic
             comment = "Market is undecided. Stay sharp."
-            if value < 20: 
-                comment = "🩸 Blood in the streets. A buying opportunity for the brave? 🤔"
-            elif value < 40:
-                comment = "😰 Fear is present. Weak hands are shaking."
+            if value < 25: 
+                comment = "Blood in the streets. A buying opportunity? 🤔"
             elif value > 75: 
-                comment = "🤑 Extreme Greed! Careful, the top might be near. 📉"
-            elif value > 60: 
-                comment = "🚀 Sentiment is bullish! Don't FOMO blindly."
+                comment = "Extreme Greed! Profit taking might be wise. 📉"
+            elif value > 60:
+                comment = "Sentiment is bullish! Don't FOMO blindly. 🚀"
 
             msg = (
                 f"🧠 **MARKET PSYCHOLOGY (Fear & Greed)**\n\n"
@@ -157,8 +138,7 @@ async def fear_greed_job(context: ContextTypes.DEFAULT_TYPE):
 async def top_gainers_job(context: ContextTypes.DEFAULT_TYPE):
     """
     [Scheduled Job]
-    Broadcasts the Top 5 Gainer Coins (Top 100 MC).
-    Strategy: Captures US Market open volatility (15:30 CET).
+    Broadcasts the Top 5 Gainer Coins.
     """
     job = context.job
     chat_id = job.chat_id
@@ -169,7 +149,6 @@ async def top_gainers_job(context: ContextTypes.DEFAULT_TYPE):
         if coins:
             list_text = ""
             for i, coin in enumerate(coins):
-                # Clean formatting for readability
                 symbol = coin['symbol'].upper()
                 price = coin['current_price']
                 change = coin['price_change_percentage_24h']
@@ -188,7 +167,7 @@ async def top_gainers_job(context: ContextTypes.DEFAULT_TYPE):
 async def long_short_job(context: ContextTypes.DEFAULT_TYPE):
     """
     [Scheduled Job]
-    Broadcasts BTC Long/Short Ratio from Binance Futures.
+    Broadcasts BTC Long/Short Ratio.
     """
     job = context.job
     chat_id = job.chat_id
@@ -204,7 +183,7 @@ async def long_short_job(context: ContextTypes.DEFAULT_TYPE):
             bias = "BULLISH 🐂" if ratio > 1 else "BEARISH 🐻"
             
             msg = (
-                f"⚖️ **LONG vs SHORT BATTLE (BTC)**\n"
+                f"⚖️ **LONG vs SHORT (BTC)**\n"
                 f"Smart money positioning on Binance:\n\n"
                 f"📈 **Longs:** `{longs:.1f}%`\n"
                 f"📉 **Shorts:** `{shorts:.1f}%`\n"
@@ -219,11 +198,66 @@ async def long_short_job(context: ContextTypes.DEFAULT_TYPE):
 # SECTION 2: SCHEDULER CONTROLLER
 # =========================================
 
+def schedule_all_jobs(job_queue: JobQueue, chat_id: int):
+    """
+    Central function to schedule all daily tasks.
+    Used by both /autopilot_on command and on_startup event.
+    """
+    job_prefix = str(chat_id)
+    
+    # 1. Clean existing jobs to prevent duplicates
+    current_jobs = job_queue.get_jobs_by_name(job_prefix)
+    for job in current_jobs:
+        job.schedule_removal()
+        
+    # 2. Schedule New Jobs (Aligned to Istanbul Time)
+    
+    # 08:30 - Morning News
+    job_queue.run_daily(
+        news_digest_job, 
+        time=datetime.time(hour=8, minute=30, tzinfo=TIMEZONE_TARGET), 
+        chat_id=chat_id, 
+        name=f"{job_prefix}_morning"
+    )
+    
+    # 12:00 - Fear & Greed
+    job_queue.run_daily(
+        fear_greed_job, 
+        time=datetime.time(hour=12, minute=0, tzinfo=TIMEZONE_TARGET), 
+        chat_id=chat_id, 
+        name=f"{job_prefix}_fng"
+    )
+    
+    # 15:30 - Top Gainers
+    job_queue.run_daily(
+        top_gainers_job, 
+        time=datetime.time(hour=15, minute=30, tzinfo=TIMEZONE_TARGET), 
+        chat_id=chat_id, 
+        name=f"{job_prefix}_gainers"
+    )
+    
+    # 18:00 - Long/Short Ratio
+    job_queue.run_daily(
+        long_short_job, 
+        time=datetime.time(hour=18, minute=0, tzinfo=TIMEZONE_TARGET), 
+        chat_id=chat_id, 
+        name=f"{job_prefix}_ls"
+    )
+    
+    # 20:30 - Evening News
+    job_queue.run_daily(
+        news_digest_job, 
+        time=datetime.time(hour=20, minute=30, tzinfo=TIMEZONE_TARGET), 
+        chat_id=chat_id, 
+        name=f"{job_prefix}_evening"
+    )
+    
+    logger.info(f"✅ All jobs scheduled for chat {chat_id} in Target Timezone.")
+
 async def start_schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     [Command: /autopilot_on]
-    Activates the "Autopilot" mode.
-    Schedules 5 daily broadcasts aligned with Frankfurt (Berlin) time.
+    Activates the Autopilot mode.
     """
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
@@ -239,107 +273,51 @@ async def start_schedule_command(update: Update, context: ContextTypes.DEFAULT_T
         return
     # ----------------------
 
-    job_prefix = str(chat_id) 
+    # Execute Scheduling
+    schedule_all_jobs(context.job_queue, chat_id)
 
-    # Security: Remove existing jobs to prevent duplication/spam
-    current_jobs = context.job_queue.get_jobs_by_name(job_prefix)
-    for job in current_jobs:
-        job.schedule_removal()
-
-    # --- SCHEDULE CONFIGURATION (Berlin Time) ---
-    
-    # 08:30 - Morning Briefing (Start of day in EU)
-    context.job_queue.run_daily(
-        news_digest_job, 
-        time=datetime.time(hour=8, minute=30, tzinfo=TIMEZONE_BERLIN), 
-        chat_id=chat_id, 
-        name=f"{job_prefix}_morning"
-    )
-    
-    # 12:00 - Fear & Greed (Lunch break)
-    context.job_queue.run_daily(
-        fear_greed_job, 
-        time=datetime.time(hour=12, minute=0, tzinfo=TIMEZONE_BERLIN), 
-        chat_id=chat_id, 
-        name=f"{job_prefix}_fng"
-    )
-    
-    # 15:30 - Top Gainers (US Market Open - Volatility Spike)
-    context.job_queue.run_daily(
-        top_gainers_job, 
-        time=datetime.time(hour=15, minute=30, tzinfo=TIMEZONE_BERLIN), 
-        chat_id=chat_id, 
-        name=f"{job_prefix}_gainers"
-    )
-    
-    # 18:00 - Long/Short Ratio (End of work day in EU)
-    context.job_queue.run_daily(
-        long_short_job, 
-        time=datetime.time(hour=18, minute=0, tzinfo=TIMEZONE_BERLIN), 
-        chat_id=chat_id, 
-        name=f"{job_prefix}_ls"
-    )
-    
-    # 20:30 - Evening Digest (Review of the day)
-    context.job_queue.run_daily(
-        news_digest_job, 
-        time=datetime.time(hour=20, minute=30, tzinfo=TIMEZONE_BERLIN), 
-        chat_id=chat_id, 
-        name=f"{job_prefix}_evening"
-    )
-
-    # Confirmation Message
     await update.message.reply_text(
         "✅ **Autopilot Activated! (Global Mode)**\n\n"
-        "TOPI is now monitoring the market 24/7. Broadcast Schedule (Frankfurt Time):\n\n"
+        "TOPI is now monitoring the market 24/7. Broadcast Schedule (Timezone: UTC+3):\n\n"
         "☕ **08:30** - Morning News\n"
-        "😨 **12:00** - Fear & Greed Index\n"
-        "🚀 **15:30** - Top Gainers (US Open)\n"
+        "😨 **12:00** - Market Psychology\n"
+        "🚀 **15:30** - Top Gainers\n"
         "⚖️ **18:00** - Long/Short Ratio\n"
         "🌙 **20:30** - Evening Digest\n\n"
         "Sit back and relax, Fren. I got this. 🐸🛡️",
         parse_mode='Markdown'
     )
-    logger.info(f"Autopilot started for chat {chat_id} with 5 daily jobs (Berlin Time).")
 
 async def stop_schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     [Command: /autopilot_off]
-    Deactivates all scheduled tasks for the chat.
+    Deactivates all scheduled tasks.
     """
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
-
+    
     # --- SECURITY CHECK ---
     try:
         member = await context.bot.get_chat_member(chat_id, user_id)
         if member.status not in ['creator', 'administrator']:
-            await update.message.reply_text("🚫 **Access Denied:** Only Admins can control the Autopilot.", parse_mode='Markdown')
-            return
-    except Exception as e:
-        logger.error(f"Admin check failed: {e}")
+            return # Silent ignore for non-admins
+    except Exception:
         return
     # ----------------------
 
     job_prefix = str(chat_id)
-
-    # Find jobs starting with the chat_id prefix
     current_jobs = [j for j in context.job_queue.jobs() if j.name and j.name.startswith(job_prefix)]
-
+    
     if not current_jobs:
-        await update.message.reply_text(
-            "⚠️ **Autopilot is already OFF.**\n"
-            "Use `/autopilot_on` to start the engine.",
-            parse_mode='Markdown'
-        )
+        await update.message.reply_text("⚠️ **Autopilot is already OFF.**")
         return
 
     for job in current_jobs:
         job.schedule_removal()
-
+    
     logger.info(f"Autopilot stopped for chat {chat_id}")
     await update.message.reply_text(
         "🛑 **Autopilot Deactivated.**\n"
-        "All automated broadcasts have been stopped. You can still use `/digest` manually.",
+        "All automated broadcasts have been stopped.",
         parse_mode='Markdown'
     )
