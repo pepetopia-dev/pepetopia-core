@@ -7,78 +7,80 @@ from src.app_config import Config
 
 logger = logging.getLogger(__name__)
 
-# --- STRATEGIC CONTEXT ---
-# PEPETOPIA IDENTITY & ALGORITHM MAPPING
-# Mapped directly from 'home-mixer/scorers/weighted_scorer.rs'
-PROJECT_CONTEXT = """
-Project: PEPETOPIA
-Ticker: PEPETOPIA
-Identity: A sophisticated crypto ecosystem.
-Tone: Intellectual, High-Signal, 'The Insider', slightly arrogant but valid.
-
---- X ALGORITHM WEIGHTS (INTERNAL KNOWLEDGE) ---
-The following weights determine tweet visibility. Use them to craft the strategy:
-1. REPLY_WEIGHT: High priority. Questions trigger replies.
-2. PROFILE_CLICK_WEIGHT: Curiosity gaps that force users to visit the profile.
-3. PHOTO_EXPAND_WEIGHT: Images that require clicking to see full details (e.g., tall infographics).
-4. VQV_WEIGHT (Video Quality View): Video content > 2 seconds is boosted.
-5. DWELL_TIME: Long-form text that hooks the reader increases score.
-6. NEGATIVE SIGNALS (AVOID): Blocks, Mutes, Reports drastically reduce visibility.
+# --- 1. X ALGORITHM INTELLIGENCE (SHARED KNOWLEDGE) ---
+# Derived from 'home-mixer/scorers/weighted_scorer.rs'
+X_ALGO_RULES = """
+--- X ALGORITHM RULES (INTERNAL KNOWLEDGE) ---
+Optimize for these WeightedScorer.rs variables:
+1. REPLY_WEIGHT: Questions/Debates trigger high reply scores.
+2. PROFILE_CLICK_WEIGHT: Curiosity gaps (e.g., "Check pinned") force profile visits.
+3. PHOTO_EXPAND_WEIGHT: Vertical images/charts that require clicking.
+4. DWELL_TIME: Long-form, high-value content keeps users reading.
+5. VQV_WEIGHT (Video): Video content >2s gets a boost.
 """
+
+# --- 2. DUAL PERSONA DEFINITIONS ---
+PERSONAS = {
+    "dev": {
+        "role": "THE ARCHITECT (@pepetopia_dev)",
+        "tone": "Technical, Transparent, 'Builder-to-Builder', Humble but Smart.",
+        "goals": "Build trust through code. Solve problems publicly. NO SHILLING.",
+        "style_guide": "Use technical jargon (Rust, RPC, Latency). Explain 'How'. Focus on Engineering Wins.",
+        "example_hook": "Spent 4 hours debugging Solana RPC latency. Here is the fix:"
+    },
+    "brand": {
+        "role": "THE VISIONARY (@pepetopia)",
+        "tone": "High-Status, Intellectual, 'The Insider', Cult-Leader Vibes.",
+        "goals": "Dominate the narrative. Sell the vision/freedom. Maximize Hype without being cheap.",
+        "style_guide": "Focus on 'Why'. Talk about Privacy, Freedom, Ecosystem Dominance. Be bold/arrogant.",
+        "example_hook": "Privacy is not a feature. It is the only way to survive the next cycle."
+    }
+}
 
 class StrategyEngine:
     """
-    Decides the engagement strategy based on X's Open Source Algorithm parameters.
-    It acts as a 'Pre-Processing Layer' before generating the actual content.
+    Decides the engagement strategy based on the selected PERSONA and X Algorithm.
     """
     
     @staticmethod
-    def construct_adaptive_prompt(user_input: str) -> str:
+    def construct_adaptive_prompt(user_input: str, persona_key: str) -> str:
         """
-        Constructs a prompt that forces Gemini to act as the 'WeightedScorer' from the X Algorithm.
-        It generates options maximizing specific variables found in 'weighted_scorer.rs'.
+        Builds a context-aware prompt combining the Persona + Algorithm Rules.
         """
+        persona = PERSONAS.get(persona_key, PERSONAS["brand"])  # Default to Brand
+        
         return f"""
-{PROJECT_CONTEXT}
+--- IDENTITY PROTOCOL: {persona['role']} ---
+Tone: {persona['tone']}
+Goal: {persona['goals']}
+Style: {persona['style_guide']}
 
---- INPUT TWEET ---
+{X_ALGO_RULES}
+
+--- INPUT CONTEXT ---
 "{user_input}"
 
 --- MISSION ---
-Analyze the input tweet. Then, generate 3 DISTINCT reply options. 
-Each option MUST target a specific variable from the X Algorithm Source Code.
+Generate 3 HIGH-RANKING tweet options acting strictly as {persona['role']}.
+Each option must target a specific X Algorithm metric.
 
 --- STRATEGY MODES (Select 3 distinct ones) ---
-1. MODE_REPLY_FARM (Targets: REPLY_WEIGHT):
-   - End with a controversial question or a "Call to Action".
-   - Goal: Maximize comment section density.
-   
-2. MODE_PROFILE_BAIT (Targets: PROFILE_CLICK_WEIGHT):
-   - Tease "Alpha" or hidden info.
-   - Example phrase: "The full chart is in my pinned tweet..."
-   - Goal: Force a profile visit.
-
-3. MODE_VISUAL_HOOK (Targets: PHOTO_EXPAND_WEIGHT / VQV_WEIGHT):
-   - Suggest a specific visual (Meme or Chart).
-   - Text must reference the image to force an expand.
-   - Goal: Stop the scroll.
-
-4. MODE_DWELL_MAX (Targets: DWELL_TIME):
-   - Longer, insightful text.
-   - Use "Step-by-step" analysis format.
-   - Goal: Keep user reading for >15 seconds.
+1. MODE_TECHNICAL_DEEP_DIVE (Target: DWELL_TIME) -> Best for Dev
+2. MODE_CONTROVERSIAL_TAKE (Target: REPLY_WEIGHT) -> Best for Brand
+3. MODE_VISUAL_ALPHA (Target: PHOTO_EXPAND_WEIGHT) -> Best for Charts/Screenshots
+4. MODE_ECOSYSTEM_BAIT (Target: PROFILE_CLICK_WEIGHT) -> Best for Teasers
 
 --- OUTPUT FORMAT (STRICT JSON) ---
 Output ONLY a valid JSON object. No markdown.
 {{
-  "analysis_summary": "Brief logic on why these strategies fit the input.",
+  "analysis_summary": "Why this fits the {persona['role']} persona.",
   "options": [
     {{
       "strategy_mode": "MODE_NAME",
-      "target_metric": "e.g., PROFILE_CLICK_WEIGHT",
+      "target_metric": "ALGO_VARIABLE",
       "score_prediction": 95,
-      "visual_cue": "Description of image/video to attach. Be specific.",
-      "tweet_content": "The tweet text here. No hashtags in sentences. End with #Pepetopia."
+      "visual_cue": "Specific description of image/video.",
+      "tweet_content": "Tweet text here. End with #{'PepetopiaDev' if persona_key == 'dev' else 'Pepetopia'}."
     }}
   ]
 }}
@@ -90,14 +92,10 @@ class ModelManager:
     CRITICAL: Logic is preserved to ensure continuity of service across model limits.
     """
     _cached_models = []
-    _current_index = 0  # Points to the last known working model
+    _current_index = 0
 
     @staticmethod
     def _extract_version(model_name: str) -> float:
-        """
-        Extracts version number for sorting. 
-        Supports both '1.5' (float) and '3' (int) formats.
-        """
         match = re.search(r'(\d+(?:\.\d+)?)', model_name)
         if match:
             return float(match.group(1))
@@ -105,10 +103,6 @@ class ModelManager:
 
     @classmethod
     def get_prioritized_models(cls):
-        """
-        Fetches models from Google, filters for 'generateContent', 
-        and sorts by Version (Newest First) -> Name.
-        """
         if cls._cached_models:
             return cls._cached_models
 
@@ -123,13 +117,11 @@ class ModelManager:
                 if 'generateContent' in m.supported_generation_methods and 'gemini' in m.name:
                     valid_models.append(m.name)
             
-            # Sort by version descending (e.g., 2.0 > 1.5)
-            # Second sort key prefers 'pro' models over 'flash' for same versions
+            # Sort: Version Descending -> Pro over Flash
             valid_models.sort(key=lambda x: (cls._extract_version(x), 'pro' in x), reverse=True)
             
             if not valid_models:
-                logger.warning("⚠️ No models found dynamically. Using hardcoded fallback.")
-                # Fallback list
+                logger.warning("⚠️ No models found dynamically. Using fallback.")
                 valid_models = ["models/gemini-1.5-pro", "models/gemini-1.5-flash"]
 
             logger.info(f"✅ Model Priority List: {valid_models}")
@@ -142,105 +134,103 @@ class ModelManager:
 
     @classmethod
     def update_champion(cls, model_name):
-        """Updates the pointer to the current working model."""
         if model_name in cls._cached_models:
             cls._current_index = cls._cached_models.index(model_name)
 
     @classmethod
     def get_rotated_list(cls):
-        """
-        Returns the model list but rotated so it STARTS with the last working model.
-        """
         models = cls.get_prioritized_models()
         if not models:
             return []
-            
-        # Safety check for index bounds
         if cls._current_index >= len(models):
             cls._current_index = 0
-            
-        # Slice and rotate
         return models[cls._current_index:] + models[:cls._current_index]
 
 def analyze_and_draft(user_input: str) -> str:
     """
-    Main orchestration function.
-    1. Sanitizes input.
-    2. Uses 'Sticky Session' to get the best model.
-    3. Generates algorithm-compliant strategies.
-    4. Formats for Telegram.
+    Orchestrates the AI interaction with Persona Routing.
     """
-    candidate_models = ModelManager.get_rotated_list()
-    
-    # SECURITY: Input Sanitization to prevent prompt injection or token overflow
-    sanitized_input = re.sub(r'[^\w\s@#.,!?\-\'\"]', '', user_input[:1200])
-    
-    final_prompt = StrategyEngine.construct_adaptive_prompt(sanitized_input)
+    # 1. PARSE PERSONA TAG (ROUTING LAYER)
+    persona_key = "brand" # Default
+    clean_input = user_input
 
+    # Regex to find @pepetopia_dev or @pepetopia at the end
+    match = re.search(r'(@pepetopia_dev|@pepetopia)\s*$', user_input, re.IGNORECASE)
+    if match:
+        tag = match.group(1).lower()
+        if "dev" in tag:
+            persona_key = "dev"
+        else:
+            persona_key = "brand"
+        
+        # Remove the tag from the input so AI doesn't repeat it
+        clean_input = user_input[:match.start()].strip()
+
+    # 2. SECURITY: Input Sanitization
+    sanitized_input = re.sub(r'[^\w\s@#.,!?\-\'\"]', '', clean_input[:1500])
+    
+    # 3. GENERATE PROMPT
+    candidate_models = ModelManager.get_rotated_list()
+    final_prompt = StrategyEngine.construct_adaptive_prompt(sanitized_input, persona_key)
+
+    # 4. EXECUTE AI CHAIN
     for model_name in candidate_models:
         try:
-            # logger.info(f"🧠 Trying Engine: {model_name}")
-            
-            # Using strict system instructions for JSON reliability
             model = genai.GenerativeModel(
                 model_name, 
-                system_instruction="You are a JSON-only generator. Output raw JSON without Markdown formatting."
+                system_instruction="You are a JSON-only generator. Output raw JSON without Markdown."
             )
             
             response = model.generate_content(final_prompt)
             raw_text = response.text.strip()
             
-            # Parser: Remove markdown code blocks if AI adds them (Common LLM behavior)
+            # Cleaner
             if raw_text.startswith("```"):
                 raw_text = re.sub(r"^```json|^```|```$", "", raw_text, flags=re.MULTILINE).strip()
 
-            # Validation: Ensure strict JSON
             try:
                 data = json.loads(raw_text)
             except json.JSONDecodeError:
-                logger.error(f"❌ JSON Decode Error on {model_name}. Raw: {raw_text[:50]}...")
-                # Treat malformed JSON as a model failure to trigger fallback
-                raise exceptions.GoogleAPICallError("Malformed JSON response")
+                logger.error(f"❌ JSON Error on {model_name}. Raw: {raw_text[:50]}...")
+                raise exceptions.GoogleAPICallError("Malformed JSON")
 
-            # SUCCESS PATH
-            # 1. Update Sticky Session
+            # Success
             ModelManager.update_champion(model_name)
-            
-            # 2. Format & Return
-            return format_telegram_response(data, model_name)
+            return format_telegram_response(data, model_name, persona_key)
 
         except exceptions.ResourceExhausted:
             logger.warning(f"⚠️ Quota Exceeded for {model_name}. Switching...")
-            continue
-            
+            continue   
         except Exception as e:
             logger.error(f"❌ Error with {model_name}: {e}. Switching...")
             continue
 
-    return "🚫 CRITICAL ERROR: All AI models failed. Please check logs."
+    return "🚫 CRITICAL ERROR: All AI models failed."
 
-def format_telegram_response(data: dict, model_name: str) -> str:
+def format_telegram_response(data: dict, model_name: str, persona_key: str) -> str:
     """
-    Formats the JSON data into a readable Telegram HTML/Markdown message.
+    Formats the output with visual cues for the active persona.
     """
-    analysis = data.get("analysis_summary", "No analysis provided.")
+    analysis = data.get("analysis_summary", "No analysis.")
     options = data.get("options", [])
     
-    output = f"🧠 **X-Algo Strategy Analysis:**\n_{analysis}_\n\n"
+    # Header Icon based on Persona
+    header_icon = "👨‍💻" if persona_key == "dev" else "👑"
+    role_title = "BUILDER MODE" if persona_key == "dev" else "VISIONARY MODE"
+
+    output = f"{header_icon} **{role_title} ACTIVE**\n"
+    output += f"🧠 _Analysis: {analysis}_\n\n"
     
     for i, opt in enumerate(options, 1):
-        mode = opt.get('strategy_mode', 'Unknown Mode')
-        metric = opt.get('target_metric', 'Unknown Metric')
+        mode = opt.get('strategy_mode', 'Unknown')
         score = opt.get('score_prediction', 0)
-        visual = opt.get('visual_cue', 'No media suggested')
+        visual = opt.get('visual_cue', '-')
         content = opt.get('tweet_content', '')
         
         output += (
-            f"🔹 **Option {i}: {mode}**\n"
-            f"🎯 *Target:* `{metric}` (Est. Score: {score})\n"
+            f"🔹 **Option {i}: {mode}** (Score: {score})\n"
             f"🖼️ *Visual:* {visual}\n"
-            f"📋 `COPY BELOW:`\n"
-            f"{content}\n\n"
+            f"📋 `COPY:`\n{content}\n\n"
         )
         
     output += f"⚙️ *Engine: {model_name.replace('models/', '')}*"
