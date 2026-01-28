@@ -1,165 +1,174 @@
 import google.generativeai as genai
-from google.api_core import exceptions
 import logging
-import re
+from google.api_core import exceptions
 from src.app_config import Config
 
+# Configure Logger
 logger = logging.getLogger(__name__)
 
-# --- SYSTEM PROMPT (X ALGORITHM GENERATOR) ---
-SYSTEM_PROMPT = """
-You are an expert X (Twitter) Algorithm Engineer for 'Pepetopia'.
-Your Goal: Generate 3 DISTINCT high-ranking reply options for the input tweet.
+# Initialize Gemini API
+try:
+    genai.configure(api_key=Config.GEMINI_API_KEY)
+except Exception as e:
+    logger.critical(f"Failed to configure Gemini API: {e}")
 
---- ALGORITHM RULES (INTERNAL) ---
-1. Reply Weight (75x): High priority on questions to trigger back-and-forth.
-2. Media Richness: Suggest visual formats (Video/Image) to boost 'dwell time'.
-3. SimClusters: Use keywords relevant to the tweet's topic (Software/Finance/Crypto).
-4. Safety: ZERO toxicity.
-5. NO LINKS.
+# ==============================================================================
+# STRATEGIC SYSTEM INSTRUCTION (X ALGORITHM HACKER)
+# ==============================================================================
+SYSTEM_INSTRUCTION = """
+ROLE:
+You are the Chief Algorithmic Strategist for "PEPETOPIA". 
+Your goal is to draft tweets that maximize the "Weighted Score" in the X (Twitter) recommendation algorithm.
 
---- OUTPUT FORMAT (STRICT) ---
-You must provide 3 options (Variations).
-For the '📋 COPY:' section, use PLAIN TEXT only (No markdown, no bold, no italics).
+ALGORITHM OPTIMIZATION RULES (STRICT COMPLIANCE REQUIRED):
+1. OPTIMIZE FOR 'REPLY_SCORE': NEVER end a tweet with a period. ALWAYS end with a provoking Question.
+2. OPTIMIZE FOR 'DWELL_TIME': Use "Hooks" at the beginning (e.g., "The on-chain data is lying to you...").
+3. OPTIMIZE FOR 'PROFILE_CLICK_SCORE': Create an information gap.
+4. NO CHEAP SHILLING: No "Buy now". Use "Accumulation phase detected".
 
-Option 1: [Define Strategy: e.g., Witty/Humorous]
-Score: [0-100] (Reasoning: e.g., High Reply Weight due to question)
-Media: [Suggest Image/Video/None]
-📋 COPY:
-[Write the tweet here - Plain Text]
+OPERATIONAL MODES:
+- MODE A (Chaos Analyst): Use fear/uncertainty to position PEPETOPIA as a hedge.
+- MODE B (The Visionary): Use philosophical concepts (Matrix, Simulation theory).
 
-Option 2: [Define Strategy: e.g., Insightful/Supportive]
-Score: [0-100]
-Media: [Suggest Image/Video/None]
-📋 COPY:
-[Write the tweet here - Plain Text]
-
-Option 3: [Define Strategy: e.g., Provocative/Debate]
-Score: [0-100]
-Media: [Suggest Image/Video/None]
-📋 COPY:
-[Write the tweet here - Plain Text]
+OUTPUT FORMAT:
+Return the response in the following structured format:
+🧠 **Strategy Analysis:** (Brief explanation)
+🚀 **Optimized Tweet:** (Final tweet with #Pepetopia)
+🎨 **Visual Suggestion:** (Image description for 'photo_expand_score')
 """
 
+# ==============================================================================
+# MODEL MANAGER (DYNAMIC FALLBACK SYSTEM)
+# ==============================================================================
 class ModelManager:
     """
-    Manages dynamic discovery, fallback logic, and 'Sticky' model selection.
+    Manages Google Gemini models dynamically. 
+    It fetches available models, sorts them by newness, and handles failover (fallback)
+    if a specific model quota is exhausted.
     """
     _cached_models = []
-    _current_index = 0  # Points to the last known working model
-
-    @staticmethod
-    def _extract_version(model_name: str) -> float:
-        """
-        Extracts version number for sorting. 
-        Supports both '1.5' (float) and '3' (int) formats.
-        """
-        match = re.search(r'(\d+(?:\.\d+)?)', model_name)
-        if match:
-            return float(match.group(1))
-        return 0.0
+    _current_champion_index = 0
 
     @classmethod
-    def get_prioritized_models(cls):
+    def get_models(cls):
         """
-        Fetches models from Google, filters for 'generateContent', 
-        and sorts by Version (Newest First) -> Name.
+        Fetches and sorts models ensuring we always try the latest/best ones first.
         """
-        if cls._cached_models:
-            return cls._cached_models
-
-        try:
-            logger.info("📡 Discovering available Gemini models...")
-            genai.configure(api_key=Config.GEMINI_API_KEY)
-            
-            all_models = list(genai.list_models())
-            valid_models = []
-
-            for m in all_models:
-                if 'generateContent' in m.supported_generation_methods and 'gemini' in m.name:
-                    valid_models.append(m.name)
-            
-            # Sort by version descending (e.g., 3.0 > 2.0 > 1.5)
-            # Second sort key prefers 'pro' models over 'flash' for same versions
-            valid_models.sort(key=lambda x: (cls._extract_version(x), 'pro' in x), reverse=True)
-            
-            if not valid_models:
-                logger.warning("⚠️ No models found dynamically. Using hardcoded fallback.")
-                # Fallback list
-                valid_models = ["models/gemini-1.5-pro", "models/gemini-1.5-flash"]
-
-            logger.info(f"✅ Model Priority List: {valid_models}")
-            cls._cached_models = valid_models
-            return valid_models
-
-        except Exception as e:
-            logger.error(f"❌ Model discovery failed: {e}")
-            return ["models/gemini-1.5-flash"]
-
-    @classmethod
-    def update_champion(cls, model_name):
-        """Updates the pointer to the current working model."""
-        if model_name in cls._cached_models:
-            cls._current_index = cls._cached_models.index(model_name)
+        if not cls._cached_models:
+            try:
+                logger.info("Fetching available Gemini models from Google API...")
+                all_models = genai.list_models()
+                
+                # Filter for models that support content generation and are stable/pro versions
+                candidates = [
+                    m.name for m in all_models 
+                    if 'generateContent' in m.supported_generation_methods 
+                    and 'gemini' in m.name
+                ]
+                
+                # Sort in reverse order (usually puts newer versions like 1.5 before 1.0)
+                # This ensures we always try the latest tech first without code changes.
+                cls._cached_models = sorted(candidates, reverse=True)
+                
+                if not cls._cached_models:
+                    logger.error("No suitable Gemini models found.")
+                    return []
+                    
+                logger.info(f"Discovered models: {cls._cached_models}")
+                
+            except Exception as e:
+                logger.error(f"Failed to list models: {e}")
+                # Fallback hardcoded list if API list fails
+                cls._cached_models = ["models/gemini-1.5-pro-latest", "models/gemini-1.5-flash", "models/gemini-pro"]
+        
+        return cls._cached_models
 
     @classmethod
     def get_rotated_list(cls):
         """
-        Returns the model list but rotated so it STARTS with the last working model.
-        Example: [A, B, C, D] with index 2 becomes [C, D, A, B]
+        Returns the list of models starting from the last successful one (Sticky Session).
         """
-        models = cls.get_prioritized_models()
+        models = cls.get_models()
         if not models:
             return []
             
-        # Safety check for index bounds
-        if cls._current_index >= len(models):
-            cls._current_index = 0
-            
-        # Slice and rotate
-        return models[cls._current_index:] + models[:cls._current_index]
+        # Rotate list: [C, D, A, B] if C was the last champion
+        return models[cls._current_champion_index:] + models[:cls._current_champion_index]
+
+    @classmethod
+    def update_champion(cls, model_name):
+        """
+        Updates the pointer to the currently working model to save time on next request.
+        """
+        models = cls.get_models()
+        if model_name in models:
+            cls._current_champion_index = models.index(model_name)
+            logger.info(f"Champion model updated to: {model_name}")
+
+# ==============================================================================
+# AI ENGINE CORE
+# ==============================================================================
 
 def analyze_and_draft(user_input: str) -> str:
     """
     Tries to generate content using the best available model.
     Uses 'Sticky Session' logic: Starts from the last working model.
+    
+    Args:
+        user_input (str): The raw thought or context provided by the user.
+
+    Returns:
+        str: The structured response containing analysis, tweet, and visual cues.
     """
+    
+    # Input Validation
+    if not user_input or len(user_input) > 4000:
+        return "⚠️ **Error:** Input is too long or empty."
+
     # Get the list starting from our current champion
     candidate_models = ModelManager.get_rotated_list()
     
-    final_prompt = f"""
-    Target Tweet:
-    "{user_input}"
-    
-    Task: Generate 3 High-Ranking Reply Options based on X Algorithm.
-    """
+    if not candidate_models:
+        return "⚠️ **System Error:** No AI models available."
+
+    last_error = None
 
     for model_name in candidate_models:
         try:
-            # logger.info(f"🧠 Trying Engine: {model_name}") 
+            # logger.info(f"🧠 Trying Engine: {model_name}")
             
             model = genai.GenerativeModel(
-                model_name, 
-                system_instruction=SYSTEM_PROMPT
+                model_name=model_name, 
+                system_instruction=SYSTEM_INSTRUCTION, # Injecting our X Algorithm Strategy
+                generation_config={
+                    "temperature": 0.85,
+                    "top_p": 0.95,
+                    "top_k": 40,
+                    "max_output_tokens": 1024,
+                }
             )
             
-            response = model.generate_content(final_prompt)
+            response = model.generate_content(user_input)
             result = response.text.strip()
             
             # SUCCESS!
             # 1. Update the sticky pointer so next time we start here.
             ModelManager.update_champion(model_name)
             
-            # 2. Append Footer
-            result += f"\n\n⚙️ *Engine: {model_name.replace('models/', '')}*"
+            # 2. Append Footer (To let you know which model did the job)
+            clean_name = model_name.replace('models/', '')
+            result += f"\n\n⚙️ *Engine: {clean_name}* | *X-Algo: Active*"
+            
             return result
 
         except exceptions.ResourceExhausted:
-            logger.warning(f"⚠️ Quota Exceeded for {model_name}. Switching...")
-            continue
-            
-        except Exception as e:
-            logger.error(f"❌ Error with {model_name}: {e}. Switching...")
+            logger.warning(f"⚠️ Quota Exceeded for {model_name}. Switching to next...")
+            last_error = "Quota Exceeded"
             continue
 
-    return "🚫 CRITICAL ERROR: All AI models failed."
+        except Exception as e:
+            logger.error(f"❌ Error with {model_name}: {e}. Switching...")
+            last_error = str(e)
+            continue
+
+    return f"🚫 **CRITICAL FAILURE:** All AI models failed.\nLast Error: {last_error}"
