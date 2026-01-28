@@ -1,174 +1,247 @@
 import google.generativeai as genai
-import logging
 from google.api_core import exceptions
+import logging
+import re
+import json
 from src.app_config import Config
 
-# Configure Logger
 logger = logging.getLogger(__name__)
 
-# Initialize Gemini API
-try:
-    genai.configure(api_key=Config.GEMINI_API_KEY)
-except Exception as e:
-    logger.critical(f"Failed to configure Gemini API: {e}")
+# --- STRATEGIC CONTEXT ---
+# PEPETOPIA IDENTITY & ALGORITHM MAPPING
+# Mapped directly from 'home-mixer/scorers/weighted_scorer.rs'
+PROJECT_CONTEXT = """
+Project: PEPETOPIA
+Ticker: PEPETOPIA
+Identity: A sophisticated crypto ecosystem.
+Tone: Intellectual, High-Signal, 'The Insider', slightly arrogant but valid.
 
-# ==============================================================================
-# STRATEGIC SYSTEM INSTRUCTION (X ALGORITHM HACKER)
-# ==============================================================================
-SYSTEM_INSTRUCTION = """
-ROLE:
-You are the Chief Algorithmic Strategist for "PEPETOPIA". 
-Your goal is to draft tweets that maximize the "Weighted Score" in the X (Twitter) recommendation algorithm.
-
-ALGORITHM OPTIMIZATION RULES (STRICT COMPLIANCE REQUIRED):
-1. OPTIMIZE FOR 'REPLY_SCORE': NEVER end a tweet with a period. ALWAYS end with a provoking Question.
-2. OPTIMIZE FOR 'DWELL_TIME': Use "Hooks" at the beginning (e.g., "The on-chain data is lying to you...").
-3. OPTIMIZE FOR 'PROFILE_CLICK_SCORE': Create an information gap.
-4. NO CHEAP SHILLING: No "Buy now". Use "Accumulation phase detected".
-
-OPERATIONAL MODES:
-- MODE A (Chaos Analyst): Use fear/uncertainty to position PEPETOPIA as a hedge.
-- MODE B (The Visionary): Use philosophical concepts (Matrix, Simulation theory).
-
-OUTPUT FORMAT:
-Return the response in the following structured format:
-🧠 **Strategy Analysis:** (Brief explanation)
-🚀 **Optimized Tweet:** (Final tweet with #Pepetopia)
-🎨 **Visual Suggestion:** (Image description for 'photo_expand_score')
+--- X ALGORITHM WEIGHTS (INTERNAL KNOWLEDGE) ---
+The following weights determine tweet visibility. Use them to craft the strategy:
+1. REPLY_WEIGHT: High priority. Questions trigger replies.
+2. PROFILE_CLICK_WEIGHT: Curiosity gaps that force users to visit the profile.
+3. PHOTO_EXPAND_WEIGHT: Images that require clicking to see full details (e.g., tall infographics).
+4. VQV_WEIGHT (Video Quality View): Video content > 2 seconds is boosted.
+5. DWELL_TIME: Long-form text that hooks the reader increases score.
+6. NEGATIVE SIGNALS (AVOID): Blocks, Mutes, Reports drastically reduce visibility.
 """
 
-# ==============================================================================
-# MODEL MANAGER (DYNAMIC FALLBACK SYSTEM)
-# ==============================================================================
+class StrategyEngine:
+    """
+    Decides the engagement strategy based on X's Open Source Algorithm parameters.
+    It acts as a 'Pre-Processing Layer' before generating the actual content.
+    """
+    
+    @staticmethod
+    def construct_adaptive_prompt(user_input: str) -> str:
+        """
+        Constructs a prompt that forces Gemini to act as the 'WeightedScorer' from the X Algorithm.
+        It generates options maximizing specific variables found in 'weighted_scorer.rs'.
+        """
+        return f"""
+{PROJECT_CONTEXT}
+
+--- INPUT TWEET ---
+"{user_input}"
+
+--- MISSION ---
+Analyze the input tweet. Then, generate 3 DISTINCT reply options. 
+Each option MUST target a specific variable from the X Algorithm Source Code.
+
+--- STRATEGY MODES (Select 3 distinct ones) ---
+1. MODE_REPLY_FARM (Targets: REPLY_WEIGHT):
+   - End with a controversial question or a "Call to Action".
+   - Goal: Maximize comment section density.
+   
+2. MODE_PROFILE_BAIT (Targets: PROFILE_CLICK_WEIGHT):
+   - Tease "Alpha" or hidden info.
+   - Example phrase: "The full chart is in my pinned tweet..."
+   - Goal: Force a profile visit.
+
+3. MODE_VISUAL_HOOK (Targets: PHOTO_EXPAND_WEIGHT / VQV_WEIGHT):
+   - Suggest a specific visual (Meme or Chart).
+   - Text must reference the image to force an expand.
+   - Goal: Stop the scroll.
+
+4. MODE_DWELL_MAX (Targets: DWELL_TIME):
+   - Longer, insightful text.
+   - Use "Step-by-step" analysis format.
+   - Goal: Keep user reading for >15 seconds.
+
+--- OUTPUT FORMAT (STRICT JSON) ---
+Output ONLY a valid JSON object. No markdown.
+{{
+  "analysis_summary": "Brief logic on why these strategies fit the input.",
+  "options": [
+    {{
+      "strategy_mode": "MODE_NAME",
+      "target_metric": "e.g., PROFILE_CLICK_WEIGHT",
+      "score_prediction": 95,
+      "visual_cue": "Description of image/video to attach. Be specific.",
+      "tweet_content": "The tweet text here. No hashtags in sentences. End with #Pepetopia."
+    }}
+  ]
+}}
+"""
+
 class ModelManager:
     """
-    Manages Google Gemini models dynamically. 
-    It fetches available models, sorts them by newness, and handles failover (fallback)
-    if a specific model quota is exhausted.
+    Manages dynamic discovery, fallback logic, and 'Sticky' model selection.
+    CRITICAL: Logic is preserved to ensure continuity of service across model limits.
     """
     _cached_models = []
-    _current_champion_index = 0
+    _current_index = 0  # Points to the last known working model
+
+    @staticmethod
+    def _extract_version(model_name: str) -> float:
+        """
+        Extracts version number for sorting. 
+        Supports both '1.5' (float) and '3' (int) formats.
+        """
+        match = re.search(r'(\d+(?:\.\d+)?)', model_name)
+        if match:
+            return float(match.group(1))
+        return 0.0
 
     @classmethod
-    def get_models(cls):
+    def get_prioritized_models(cls):
         """
-        Fetches and sorts models ensuring we always try the latest/best ones first.
+        Fetches models from Google, filters for 'generateContent', 
+        and sorts by Version (Newest First) -> Name.
         """
-        if not cls._cached_models:
-            try:
-                logger.info("Fetching available Gemini models from Google API...")
-                all_models = genai.list_models()
-                
-                # Filter for models that support content generation and are stable/pro versions
-                candidates = [
-                    m.name for m in all_models 
-                    if 'generateContent' in m.supported_generation_methods 
-                    and 'gemini' in m.name
-                ]
-                
-                # Sort in reverse order (usually puts newer versions like 1.5 before 1.0)
-                # This ensures we always try the latest tech first without code changes.
-                cls._cached_models = sorted(candidates, reverse=True)
-                
-                if not cls._cached_models:
-                    logger.error("No suitable Gemini models found.")
-                    return []
-                    
-                logger.info(f"Discovered models: {cls._cached_models}")
-                
-            except Exception as e:
-                logger.error(f"Failed to list models: {e}")
-                # Fallback hardcoded list if API list fails
-                cls._cached_models = ["models/gemini-1.5-pro-latest", "models/gemini-1.5-flash", "models/gemini-pro"]
-        
-        return cls._cached_models
+        if cls._cached_models:
+            return cls._cached_models
+
+        try:
+            logger.info("📡 Discovering available Gemini models...")
+            genai.configure(api_key=Config.GEMINI_API_KEY)
+            
+            all_models = list(genai.list_models())
+            valid_models = []
+
+            for m in all_models:
+                if 'generateContent' in m.supported_generation_methods and 'gemini' in m.name:
+                    valid_models.append(m.name)
+            
+            # Sort by version descending (e.g., 2.0 > 1.5)
+            # Second sort key prefers 'pro' models over 'flash' for same versions
+            valid_models.sort(key=lambda x: (cls._extract_version(x), 'pro' in x), reverse=True)
+            
+            if not valid_models:
+                logger.warning("⚠️ No models found dynamically. Using hardcoded fallback.")
+                # Fallback list
+                valid_models = ["models/gemini-1.5-pro", "models/gemini-1.5-flash"]
+
+            logger.info(f"✅ Model Priority List: {valid_models}")
+            cls._cached_models = valid_models
+            return valid_models
+
+        except Exception as e:
+            logger.error(f"❌ Model discovery failed: {e}")
+            return ["models/gemini-1.5-flash"]
+
+    @classmethod
+    def update_champion(cls, model_name):
+        """Updates the pointer to the current working model."""
+        if model_name in cls._cached_models:
+            cls._current_index = cls._cached_models.index(model_name)
 
     @classmethod
     def get_rotated_list(cls):
         """
-        Returns the list of models starting from the last successful one (Sticky Session).
+        Returns the model list but rotated so it STARTS with the last working model.
         """
-        models = cls.get_models()
+        models = cls.get_prioritized_models()
         if not models:
             return []
             
-        # Rotate list: [C, D, A, B] if C was the last champion
-        return models[cls._current_champion_index:] + models[:cls._current_champion_index]
-
-    @classmethod
-    def update_champion(cls, model_name):
-        """
-        Updates the pointer to the currently working model to save time on next request.
-        """
-        models = cls.get_models()
-        if model_name in models:
-            cls._current_champion_index = models.index(model_name)
-            logger.info(f"Champion model updated to: {model_name}")
-
-# ==============================================================================
-# AI ENGINE CORE
-# ==============================================================================
+        # Safety check for index bounds
+        if cls._current_index >= len(models):
+            cls._current_index = 0
+            
+        # Slice and rotate
+        return models[cls._current_index:] + models[:cls._current_index]
 
 def analyze_and_draft(user_input: str) -> str:
     """
-    Tries to generate content using the best available model.
-    Uses 'Sticky Session' logic: Starts from the last working model.
-    
-    Args:
-        user_input (str): The raw thought or context provided by the user.
-
-    Returns:
-        str: The structured response containing analysis, tweet, and visual cues.
+    Main orchestration function.
+    1. Sanitizes input.
+    2. Uses 'Sticky Session' to get the best model.
+    3. Generates algorithm-compliant strategies.
+    4. Formats for Telegram.
     """
-    
-    # Input Validation
-    if not user_input or len(user_input) > 4000:
-        return "⚠️ **Error:** Input is too long or empty."
-
-    # Get the list starting from our current champion
     candidate_models = ModelManager.get_rotated_list()
     
-    if not candidate_models:
-        return "⚠️ **System Error:** No AI models available."
-
-    last_error = None
+    # SECURITY: Input Sanitization to prevent prompt injection or token overflow
+    sanitized_input = re.sub(r'[^\w\s@#.,!?\-\'\"]', '', user_input[:1200])
+    
+    final_prompt = StrategyEngine.construct_adaptive_prompt(sanitized_input)
 
     for model_name in candidate_models:
         try:
             # logger.info(f"🧠 Trying Engine: {model_name}")
             
+            # Using strict system instructions for JSON reliability
             model = genai.GenerativeModel(
-                model_name=model_name, 
-                system_instruction=SYSTEM_INSTRUCTION, # Injecting our X Algorithm Strategy
-                generation_config={
-                    "temperature": 0.85,
-                    "top_p": 0.95,
-                    "top_k": 40,
-                    "max_output_tokens": 1024,
-                }
+                model_name, 
+                system_instruction="You are a JSON-only generator. Output raw JSON without Markdown formatting."
             )
             
-            response = model.generate_content(user_input)
-            result = response.text.strip()
+            response = model.generate_content(final_prompt)
+            raw_text = response.text.strip()
             
-            # SUCCESS!
-            # 1. Update the sticky pointer so next time we start here.
+            # Parser: Remove markdown code blocks if AI adds them (Common LLM behavior)
+            if raw_text.startswith("```"):
+                raw_text = re.sub(r"^```json|^```|```$", "", raw_text, flags=re.MULTILINE).strip()
+
+            # Validation: Ensure strict JSON
+            try:
+                data = json.loads(raw_text)
+            except json.JSONDecodeError:
+                logger.error(f"❌ JSON Decode Error on {model_name}. Raw: {raw_text[:50]}...")
+                # Treat malformed JSON as a model failure to trigger fallback
+                raise exceptions.GoogleAPICallError("Malformed JSON response")
+
+            # SUCCESS PATH
+            # 1. Update Sticky Session
             ModelManager.update_champion(model_name)
             
-            # 2. Append Footer (To let you know which model did the job)
-            clean_name = model_name.replace('models/', '')
-            result += f"\n\n⚙️ *Engine: {clean_name}* | *X-Algo: Active*"
-            
-            return result
+            # 2. Format & Return
+            return format_telegram_response(data, model_name)
 
         except exceptions.ResourceExhausted:
-            logger.warning(f"⚠️ Quota Exceeded for {model_name}. Switching to next...")
-            last_error = "Quota Exceeded"
+            logger.warning(f"⚠️ Quota Exceeded for {model_name}. Switching...")
             continue
-
+            
         except Exception as e:
             logger.error(f"❌ Error with {model_name}: {e}. Switching...")
-            last_error = str(e)
             continue
 
-    return f"🚫 **CRITICAL FAILURE:** All AI models failed.\nLast Error: {last_error}"
+    return "🚫 CRITICAL ERROR: All AI models failed. Please check logs."
+
+def format_telegram_response(data: dict, model_name: str) -> str:
+    """
+    Formats the JSON data into a readable Telegram HTML/Markdown message.
+    """
+    analysis = data.get("analysis_summary", "No analysis provided.")
+    options = data.get("options", [])
+    
+    output = f"🧠 **X-Algo Strategy Analysis:**\n_{analysis}_\n\n"
+    
+    for i, opt in enumerate(options, 1):
+        mode = opt.get('strategy_mode', 'Unknown Mode')
+        metric = opt.get('target_metric', 'Unknown Metric')
+        score = opt.get('score_prediction', 0)
+        visual = opt.get('visual_cue', 'No media suggested')
+        content = opt.get('tweet_content', '')
+        
+        output += (
+            f"🔹 **Option {i}: {mode}**\n"
+            f"🎯 *Target:* `{metric}` (Est. Score: {score})\n"
+            f"🖼️ *Visual:* {visual}\n"
+            f"📋 `COPY BELOW:`\n"
+            f"{content}\n\n"
+        )
+        
+    output += f"⚙️ *Engine: {model_name.replace('models/', '')}*"
+    return output
