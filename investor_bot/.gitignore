@@ -1,0 +1,10 @@
+# Environments
+.env
+.venv
+env/
+venv/
+__pycache__/
+*.pyc
+
+# Data
+data/*.json  # We might want to back this up differently, but generally avoid committing dynamic state to repo history if it contains PII.

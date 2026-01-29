@@ -1,0 +1,6 @@
+# Removed openai, added google-generativeai
+google-generativeai==0.3.2
+python-telegram-bot==20.8
+PyGithub==2.1.1
+python-dotenv==1.0.1
+schedule==1.2.1
