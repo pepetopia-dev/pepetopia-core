@@ -3,6 +3,7 @@ import datetime
 import pytz
 from telegram import Update
 from telegram.ext import ContextTypes, JobQueue
+from telegram.error import BadRequest, Forbidden
 from src.services.news_service import NewsService
 from src.services.gemini_service import GeminiService
 from src.services.market_service import MarketService
@@ -63,21 +64,28 @@ async def instant_news_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
     except Exception as e:
         logger.error(f"Critical Error in instant_news_command: {e}", exc_info=True)
-        await context.bot.edit_message_text(
-            chat_id=chat_id, 
-            message_id=status_msg.message_id, 
-            text="⚠️ **System Error:** Unable to retrieve data.", 
-            parse_mode='Markdown'
-        )
+        # Try to inform the user if possible
+        try:
+            await context.bot.edit_message_text(
+                chat_id=chat_id, 
+                message_id=status_msg.message_id, 
+                text="⚠️ **System Error:** Unable to retrieve data.", 
+                parse_mode='Markdown'
+            )
+        except Exception:
+            pass
 
 async def news_digest_job(context: ContextTypes.DEFAULT_TYPE):
     """
     [Scheduled Job]
     Fetches news and broadcasts Morning/Evening editions.
+    Handles 'Chat Not Found' errors gracefully.
     """
     job = context.job
     chat_id = job.chat_id
     
+    logger.info(f"Starting Scheduled News Digest for Chat ID: {chat_id}")
+
     try:
         news_batch = await NewsService.get_recent_news(limit=8)
         
@@ -85,7 +93,7 @@ async def news_digest_job(context: ContextTypes.DEFAULT_TYPE):
             digest_text = await GeminiService.generate_daily_digest(news_batch)
             
             # Determine edition based on job name
-            edition = "🌞 MORNING EDITION" if "morning" in job.name else "🌙 EVENING EDITION"
+            edition = "🌞 MORNING EDITION" if "morning" in str(job.name) else "🌙 EVENING EDITION"
             
             message = (
                 f"🗞️ **TOPI DAILY DIGEST | {edition}**\n\n"
@@ -94,17 +102,29 @@ async def news_digest_job(context: ContextTypes.DEFAULT_TYPE):
             )
             
             await context.bot.send_message(chat_id=chat_id, text=message, parse_mode='Markdown')
-            logger.info(f"News digest ({edition}) sent to {chat_id}.")
+            logger.info(f"✅ News digest ({edition}) successfully sent to {chat_id}.")
         else:
             logger.warning(f"News digest skipped for {chat_id}: Empty news batch.")
 
+    except BadRequest as e:
+        if "Chat not found" in str(e):
+            logger.critical(f"❌ CRITICAL: Invalid Chat ID {chat_id}. The bot cannot send messages to this ID.")
+            logger.critical("👉 ACTION REQUIRED: Update MAIN_CHAT_ID in your .env file with a valid Group ID.")
+            # Optional: Stop this job to prevent spamming logs
+            job.schedule_removal()
+        else:
+            logger.error(f"Telegram BadRequest in news_digest_job: {e}")
+            
+    except Forbidden:
+        logger.error(f"❌ CRITICAL: Bot was kicked from chat {chat_id} or lacks permissions.")
+        job.schedule_removal()
+        
     except Exception as e:
         logger.error(f"Job Execution Failed (news_digest_job): {e}", exc_info=True)
 
 async def fear_greed_job(context: ContextTypes.DEFAULT_TYPE):
     """
-    [Scheduled Job]
-    Broadcasts the Crypto Fear & Greed Index.
+    [Scheduled Job] Broadcasts the Crypto Fear & Greed Index.
     """
     job = context.job
     chat_id = job.chat_id
@@ -116,7 +136,6 @@ async def fear_greed_job(context: ContextTypes.DEFAULT_TYPE):
             value = int(data['value'])
             classification = data['value_classification']
             
-            # AI Commentary Logic
             comment = "Market is undecided. Stay sharp."
             if value < 25: 
                 comment = "Blood in the streets. A buying opportunity? 🤔"
@@ -132,13 +151,15 @@ async def fear_greed_job(context: ContextTypes.DEFAULT_TYPE):
                 f"🐸 **TOPI's Take:**\n_{comment}_"
             )
             await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='Markdown')
+            
+    except BadRequest as e:
+        logger.error(f"Failed to send Fear&Greed job to {chat_id}: {e}")
     except Exception as e:
         logger.error(f"Job Execution Failed (fear_greed_job): {e}")
 
 async def top_gainers_job(context: ContextTypes.DEFAULT_TYPE):
     """
-    [Scheduled Job]
-    Broadcasts the Top 5 Gainer Coins.
+    [Scheduled Job] Broadcasts the Top 5 Gainer Coins.
     """
     job = context.job
     chat_id = job.chat_id
@@ -166,8 +187,7 @@ async def top_gainers_job(context: ContextTypes.DEFAULT_TYPE):
 
 async def long_short_job(context: ContextTypes.DEFAULT_TYPE):
     """
-    [Scheduled Job]
-    Broadcasts BTC Long/Short Ratio.
+    [Scheduled Job] Broadcasts BTC Long/Short Ratio.
     """
     job = context.job
     chat_id = job.chat_id
