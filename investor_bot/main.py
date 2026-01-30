@@ -1,300 +1,157 @@
-"""
-Investor Bot - Main Application Entry Point
+import os
+import logging
+import pytz
+from datetime import datetime, time
+from dotenv import load_dotenv
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
+from diary_reader import DiaryReader
 
-A Telegram bot that automatically generates and delivers non-technical
-summaries of GitHub repository commits to stakeholders. Designed for
-the Pepetopia community to keep investors informed about development
-progress in an accessible, engaging format.
+# Load environment variables
+load_dotenv()
 
-Features:
-    - Automatic daily commit summarization
-    - Multi-day update distribution for large commits
-    - Manual trigger support via Telegram commands
-    - Intelligent AI model selection with fallback
+# Configure Logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-Author: Pepetopia Development Team
-"""
+# Constants
+TELEGRAM_TOKEN: str | None = os.getenv("TELEGRAM_BOT_TOKEN")
+GROUP_ID: str | None = os.getenv("TELEGRAM_GROUP_ID")
+DIARY_FILE_PATH: str = "project_diary.md"
+TR_TIMEZONE = pytz.timezone("Europe/Istanbul")
 
-import asyncio
-import html
-from datetime import datetime
-from typing import Optional
+# --- CORE LOGIC ---
 
-import schedule
-
-from src.services.github_service import GitHubService
-from src.services.summarizer import CommitSummarizer
-from src.services.telegram_service import TelegramService
-from src.utils.logger import get_logger
-from src.utils.persistence import PersistenceManager
-
-
-# Initialize module logger
-logger = get_logger("InvestorBot")
-
-
-class InvestorBot:
+async def get_daily_report_text() -> str | None:
     """
-    Main application class orchestrating the investor update bot.
-    
-    Coordinates between GitHub, AI summarization, and Telegram services
-    to deliver automated development updates to stakeholders.
-    
-    Attributes:
-        github_service: Service for GitHub API interactions
-        telegram_service: Service for Telegram bot operations
-        summarizer: AI-powered commit summarization service
-        persistence: State management for tracking progress
+    Helper function to read the diary for the current day.
+    Returns the formatted message or None.
     """
-    
-    # Schedule time for daily updates (24-hour format)
-    DAILY_UPDATE_TIME = "17:00"
-    
-    # Default author name for queued updates
-    DEFAULT_AUTHOR = "Pepetopia Team"
-    
-    def __init__(self):
-        """
-        Initializes all bot services and components.
-        """
-        logger.info("Initializing Investor Bot...")
-        
-        self.github_service = GitHubService()
-        self.telegram_service = TelegramService(main_bot_instance=self)
-        self.summarizer = CommitSummarizer()
-        self.persistence = PersistenceManager()
-        
-        logger.info("Investor Bot initialized successfully")
-    
-    async def run_daily_task(self) -> None:
-        """
-        Executes the daily update generation and delivery task.
-        
-        Workflow:
-            1. Check for pending updates in queue
-            2. If queue has items, send next queued update
-            3. Otherwise, fetch and process new commits
-            4. Generate AI summary and queue multi-part updates
-            5. Deliver the first update immediately
-        """
-        logger.info(f"Running daily update task at {datetime.now().isoformat()}")
-        
-        # Step 1: Check for pending updates in queue
-        pending_updates = self.persistence.get_pending_updates()
-        
-        if pending_updates:
-            logger.info(f"Found {len(pending_updates)} pending updates in queue")
-            await self._process_queued_update()
-            return
-        
-        # Step 2: Fetch and process new commits
-        await self._process_new_commits()
-    
-    async def _process_queued_update(self) -> None:
-        """
-        Processes and sends the next update from the queue.
-        """
-        next_msg = self.persistence.pop_next_update()
-        
-        if next_msg:
-            await self._send_formatted_update(next_msg, self.DEFAULT_AUTHOR)
-            logger.info("Queued update delivered successfully")
-    
-    async def _process_new_commits(self) -> None:
-        """
-        Fetches new commits and generates summaries.
-        """
-        # Get all commits
-        commits = self.github_service.get_all_commits()
-        
-        # BUG FIX #4: Handle empty commit list
-        if not commits:
-            logger.warning("No commits retrieved from GitHub. Repository may be empty or API failed.")
-            return
-        
-        last_sha = self.persistence.get_last_processed_sha()
-        
-        # Find the next commit to process
-        commit_to_process = self._find_next_commit(commits, last_sha)
-        
-        if not commit_to_process:
-            logger.info("No new commits to process")
-            return
-        
-        # Get detailed commit information
-        sha = commit_to_process["sha"]
-        logger.info(f"Processing commit: {sha[:8]}...")
-        
-        detailed_data = self.github_service.get_commit_details(sha)
-        
-        if not detailed_data:
-            logger.error(f"Failed to get details for commit {sha[:8]}")
-            return
-        
-        # Generate AI summary
-        updates_list = self.summarizer.analyze_and_split(detailed_data)
-        
-        # Send first update immediately, queue the rest
-        success = await self._distribute_updates(updates_list, detailed_data)
-        
-        # BUG FIX #1: Only mark commit as processed if message was sent successfully
-        if success:
-            self.persistence.update_last_processed_sha(sha)
-            logger.info(f"Commit {sha[:8]} marked as processed")
-        else:
-            logger.error(f"Commit {sha[:8]} NOT marked as processed due to delivery failure")
-    
-    def _find_next_commit(
-        self,
-        commits: list,
-        last_sha: Optional[str]
-    ) -> Optional[dict]:
-        """
-        Finds the next unprocessed commit.
-        
-        Args:
-            commits: List of all commits (oldest first)
-            last_sha: SHA of the last processed commit
-            
-        Returns:
-            The next commit to process, or None if all processed
-        """
-        if not commits:
-            return None
-        
-        # If no previous processing, start with the first commit
-        if not last_sha:
-            return commits[0]
-        
-        # Find the commit after last_sha
-        for i, commit in enumerate(commits):
-            if commit["sha"] == last_sha and i + 1 < len(commits):
-                return commits[i + 1]
-        
+    try:
+        reader = DiaryReader(DIARY_FILE_PATH)
+        today_str = datetime.now(TR_TIMEZONE).strftime("%d.%m.%Y")
+        entry_content = reader.get_entry_by_date(today_str)
+
+        if entry_content:
+            header = f"🐸 **PEPETOPIA GÜNLÜK RAPOR - {today_str}**\n\n"
+            return header + entry_content
         return None
-    
-    async def _distribute_updates(
-        self,
-        updates: list,
-        commit_data: dict
-    ) -> bool:
-        """
-        Distributes updates across multiple days if needed.
-        
-        Args:
-            updates: List of update messages from AI
-            commit_data: Original commit data for author info
-            
-        Returns:
-            True if all operations successful, False otherwise
-        """
-        if not updates:
-            logger.warning("No updates to distribute")
-            return False
-        
-        # Pop the first update to send now
-        first_update = updates.pop(0)
-        
-        # Queue remaining updates for future days
-        if updates:
-            # BUG FIX #2: Check if queueing succeeded before proceeding
-            queue_success = self.persistence.set_pending_updates(updates)
-            if queue_success:
-                logger.info(f"Queued {len(updates)} updates for future delivery")
-            else:
-                logger.error("Failed to queue remaining updates. They will be lost.")
-                # Continue anyway to send at least the first update
-        
-        # Send the first update
-        author = commit_data.get("author", self.DEFAULT_AUTHOR)
-        return await self._send_formatted_update(first_update, author)
-    
-    async def _send_formatted_update(
-        self,
-        content: str,
-        author: str
-    ) -> bool:
-        """
-        Formats and sends an update message to Telegram.
-        
-        Args:
-            content: The update content to send
-            author: The developer/author name
-            
-        Returns:
-            True if message was sent successfully, False otherwise
-        """
-        date_str = datetime.now().strftime('%d.%m.%Y')
-        
-        # BUG FIX #5: Escape HTML special characters to prevent injection
-        safe_author = html.escape(author)
-        safe_content = html.escape(content)
-        
-        # Format the message with HTML styling
-        final_message = (
-            f"🚀 <b>DAILY DEVELOPMENT REPORT</b>\n\n"
-            f"{safe_content}\n\n"
-            f"👨‍💻 <i>Developer:</i> {safe_author}\n"
-            f"📅 <i>Date:</i> {date_str}"
-        )
-        
-        success = await self.telegram_service.send_message(final_message)
-        
-        if success:
-            logger.info("Update message delivered successfully")
-        else:
-            logger.error("Failed to deliver update message")
-        
-        return success
-    
-    async def scheduler_loop(self) -> None:
-        """
-        Runs the scheduling loop for automated daily updates.
-        
-        Schedules the daily task and continuously checks for
-        pending scheduled jobs.
-        """
-        logger.info(f"Scheduling daily updates at {self.DAILY_UPDATE_TIME}")
-        
-        schedule.every().day.at(self.DAILY_UPDATE_TIME).do(
-            lambda: asyncio.create_task(self.run_daily_task())
-        )
-        
-        while True:
-            schedule.run_pending()
-            await asyncio.sleep(1)
-    
-    async def run(self) -> None:
-        """
-        Starts the bot and all its services.
-        
-        Runs both the Telegram polling and the scheduler loop
-        concurrently using asyncio.
-        """
-        logger.info("Starting Investor Bot services...")
-        
-        try:
-            await asyncio.gather(
-                self.telegram_service.start_polling(),
-                self.scheduler_loop()
-            )
-        except KeyboardInterrupt:
-            logger.info("Shutdown signal received")
-        except Exception as e:
-            logger.error(f"Unexpected error: {e}")
-        finally:
-            logger.info("Investor Bot shutting down...")
+    except Exception as e:
+        logger.error(f"Error reading diary: {e}")
+        return None
 
+# --- COMMAND HANDLERS (INTERACTIONS) ---
 
-def main() -> None:
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Application entry point.
-    
-    Creates and runs the InvestorBot instance.
+    Responds to /start. Introduces the bot.
     """
-    bot = InvestorBot()
-    asyncio.run(bot.run())
+    user_first_name = update.effective_user.first_name
+    welcome_msg = (
+        f"Merhaba {user_first_name}! 👋\n\n"
+        "Ben **Pepetopia Asistanı**. Görevlerim şunlar:\n"
+        "📅 Her gün 20:00'de proje günlüğünü sunmak.\n"
+        "📢 Ekibin teknik gelişmelerini size aktarmak.\n\n"
+        "Komutları görmek için /help yazabilirsin."
+    )
+    await update.message.reply_text(welcome_msg, parse_mode='Markdown')
 
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Responds to /help. Lists available commands.
+    """
+    help_text = (
+        "🤖 **Mevcut Komutlar:**\n\n"
+        "/start - Botu başlatır ve tanışır.\n"
+        "/now - (Admin) Bugünün raporunu anında gönderir.\n"
+        "/status - Sistem durumunu ve sunucu saatini gösterir.\n"
+    )
+    await update.message.reply_text(help_text, parse_mode='Markdown')
+
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Responds to /status. Checks server health.
+    """
+    server_time = datetime.now(TR_TIMEZONE).strftime("%d.%m.%Y %H:%M:%S")
+    status_msg = (
+        "✅ **Sistem Çalışıyor**\n"
+        f"📍 **Sunucu Saati (TR):** `{server_time}`\n"
+        "📂 **Veri Dosyası:** Bağlı"
+    )
+    await update.message.reply_text(status_msg, parse_mode='Markdown')
+
+async def manual_report_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Responds to /now. Manually triggers the report sending.
+    Useful for testing live in the group.
+    """
+    await update.message.reply_text("⏳ Rapor taranıyor, lütfen bekleyin...")
+    
+    report_text = await get_daily_report_text()
+    
+    if report_text:
+        await update.message.reply_text(report_text, parse_mode='Markdown')
+        logger.info("Manual report sent successfully.")
+    else:
+        await update.message.reply_text(
+            "⚠️ **Uyarı:** Bugün (TR saatiyle) için henüz bir günlük girişi bulunamadı.",
+            parse_mode='Markdown'
+        )
+
+# --- AUTOMATED JOBS ---
+
+async def scheduled_report_job(context: ContextTypes.DEFAULT_TYPE):
+    """
+    The background job that runs automatically at 20:00.
+    """
+    logger.info("Running scheduled job...")
+    report_text = await get_daily_report_text()
+    
+    if report_text and GROUP_ID:
+        await context.bot.send_message(
+            chat_id=GROUP_ID,
+            text=report_text,
+            parse_mode='Markdown'
+        )
+    else:
+        logger.warning("Scheduled job found no content or GROUP_ID is missing.")
+
+# --- MAIN EXECUTION ---
+
+def main():
+    """
+    Main entry point using ApplicationBuilder (The modern way).
+    """
+    if not TELEGRAM_TOKEN:
+        logger.critical("Bot token is missing!")
+        return
+
+    # 1. Build the Application
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
+
+    # 2. Add Command Handlers (Interaction)
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("status", status_command))
+    application.add_handler(CommandHandler("now", manual_report_command))
+
+    # 3. Setup Daily Schedule (Automation)
+    # Using the built-in JobQueue instead of the 'schedule' library
+    job_queue = application.job_queue
+    
+    # Schedule time: 20:00 Turkey Time
+    target_time = time(hour=20, minute=0, tzinfo=TR_TIMEZONE)
+    
+    job_queue.run_daily(scheduled_report_job, time=target_time, days=(0, 1, 2, 3, 4, 5, 6))
+    
+    logger.info(f"Bot is live! Scheduled for {target_time} TRT.")
+
+    # 4. Run the Bot
+    # polling() keeps the script running and listening for commands
+    application.run_polling()
 
 if __name__ == "__main__":
     main()
