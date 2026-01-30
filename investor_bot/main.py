@@ -1,105 +1,272 @@
-import time
-import schedule
+"""
+Investor Bot - Main Application Entry Point
+
+A Telegram bot that automatically generates and delivers non-technical
+summaries of GitHub repository commits to stakeholders. Designed for
+the Pepetopia community to keep investors informed about development
+progress in an accessible, engaging format.
+
+Features:
+    - Automatic daily commit summarization
+    - Multi-day update distribution for large commits
+    - Manual trigger support via Telegram commands
+    - Intelligent AI model selection with fallback
+
+Author: Pepetopia Development Team
+"""
+
 import asyncio
-import sys
 from datetime import datetime
+from typing import Optional
+
+import schedule
+
 from src.services.github_service import GitHubService
-from src.services.telegram_service import TelegramService
 from src.services.summarizer import CommitSummarizer
+from src.services.telegram_service import TelegramService
+from src.utils.logger import get_logger
 from src.utils.persistence import PersistenceManager
 
+
+# Initialize module logger
+logger = get_logger("InvestorBot")
+
+
 class InvestorBot:
+    """
+    Main application class orchestrating the investor update bot.
+    
+    Coordinates between GitHub, AI summarization, and Telegram services
+    to deliver automated development updates to stakeholders.
+    
+    Attributes:
+        github_service: Service for GitHub API interactions
+        telegram_service: Service for Telegram bot operations
+        summarizer: AI-powered commit summarization service
+        persistence: State management for tracking progress
+    """
+    
+    # Schedule time for daily updates (24-hour format)
+    DAILY_UPDATE_TIME = "17:00"
+    
+    # Default author name for queued updates
+    DEFAULT_AUTHOR = "Pepetopia Team"
+    
     def __init__(self):
-        print("INFO: Initializing...")
+        """
+        Initializes all bot services and components.
+        """
+        logger.info("Initializing Investor Bot...")
+        
         self.github_service = GitHubService()
         self.telegram_service = TelegramService(main_bot_instance=self)
         self.summarizer = CommitSummarizer()
         self.persistence = PersistenceManager()
-
-    async def run_daily_task(self):
-        print(f"INFO: Running update task at {datetime.now()}")
-
-        # 1. CHECK QUEUE (Hikaye devam ediyor mu?)
+        
+        logger.info("Investor Bot initialized successfully")
+    
+    async def run_daily_task(self) -> None:
+        """
+        Executes the daily update generation and delivery task.
+        
+        Workflow:
+            1. Check for pending updates in queue
+            2. If queue has items, send next queued update
+            3. Otherwise, fetch and process new commits
+            4. Generate AI summary and queue multi-part updates
+            5. Deliver the first update immediately
+        """
+        logger.info(f"Running daily update task at {datetime.now().isoformat()}")
+        
+        # Step 1: Check for pending updates in queue
         pending_updates = self.persistence.get_pending_updates()
         
         if pending_updates:
-            print(f"INFO: Found {len(pending_updates)} pending updates in queue. Sending next one.")
-            next_msg = self.persistence.pop_next_update()
-            
-            # Kuyruktan gelen mesajı yazar bilgisi olmadan (veya generic) gönderebiliriz
-            # Ama tutarlılık için son yazar bilgisini saklamak daha iyi olurdu. 
-            # Şimdilik "Pepetopia Team" varsayalım veya önceki mantığı koruyalım.
-            await self._send_formatted_update(next_msg, "pepetopia-dev") 
+            logger.info(f"Found {len(pending_updates)} pending updates in queue")
+            await self._process_queued_update()
             return
-
-        # 2. FETCH NEW COMMIT
+        
+        # Step 2: Fetch and process new commits
+        await self._process_new_commits()
+    
+    async def _process_queued_update(self) -> None:
+        """
+        Processes and sends the next update from the queue.
+        """
+        next_msg = self.persistence.pop_next_update()
+        
+        if next_msg:
+            await self._send_formatted_update(next_msg, self.DEFAULT_AUTHOR)
+            logger.info("Queued update delivered successfully")
+    
+    async def _process_new_commits(self) -> None:
+        """
+        Fetches new commits and generates summaries.
+        """
+        # Get all commits
         commits = self.github_service.get_all_commits()
         last_sha = self.persistence.get_last_processed_sha()
         
-        commit_to_process = None
-        if not last_sha:
-            commit_to_process = commits[0] if commits else None
-        else:
-            for i, commit in enumerate(commits):
-                if commit["sha"] == last_sha and i + 1 < len(commits):
-                    commit_to_process = commits[i + 1]
-                    break
+        # Find the next commit to process
+        commit_to_process = self._find_next_commit(commits, last_sha)
         
         if not commit_to_process:
-            print("INFO: No new commits.")
+            logger.info("No new commits to process")
             return
-
-        # 3. ANALYZE
-        print(f"INFO: Analyzing commit {commit_to_process['sha']}...")
-        detailed_data = self.github_service.get_commit_details(commit_to_process["sha"])
         
-        if detailed_data:
-            # AI returns a LIST of updates
-            updates_list = self.summarizer.analyze_and_split(detailed_data)
+        # Get detailed commit information
+        sha = commit_to_process["sha"]
+        logger.info(f"Processing commit: {sha[:8]}...")
+        
+        detailed_data = self.github_service.get_commit_details(sha)
+        
+        if not detailed_data:
+            logger.error(f"Failed to get details for commit {sha[:8]}")
+            return
+        
+        # Generate AI summary
+        updates_list = self.summarizer.analyze_and_split(detailed_data)
+        
+        # Send first update immediately, queue the rest
+        await self._distribute_updates(updates_list, detailed_data)
+        
+        # Mark commit as processed
+        self.persistence.update_last_processed_sha(sha)
+    
+    def _find_next_commit(
+        self,
+        commits: list,
+        last_sha: Optional[str]
+    ) -> Optional[dict]:
+        """
+        Finds the next unprocessed commit.
+        
+        Args:
+            commits: List of all commits (oldest first)
+            last_sha: SHA of the last processed commit
             
-            # Pop the first one to send NOW
-            first_update = updates_list.pop(0)
-            
-            # Save the rest for tomorrow(s)
-            if updates_list:
-                self.persistence.set_pending_updates(updates_list)
-                print(f"INFO: Saved {len(updates_list)} extra updates for coming days.")
-
-            # Update SHA as processed
-            self.persistence.update_last_processed_sha(commit_to_process["sha"])
-            
-            await self._send_formatted_update(first_update, detailed_data['author'])
-
-    async def _send_formatted_update(self, content, author):
-        """Formats the message exactly as requested."""
+        Returns:
+            The next commit to process, or None if all processed
+        """
+        if not commits:
+            return None
+        
+        # If no previous processing, start with the first commit
+        if not last_sha:
+            return commits[0]
+        
+        # Find the commit after last_sha
+        for i, commit in enumerate(commits):
+            if commit["sha"] == last_sha and i + 1 < len(commits):
+                return commits[i + 1]
+        
+        return None
+    
+    async def _distribute_updates(
+        self,
+        updates: list,
+        commit_data: dict
+    ) -> None:
+        """
+        Distributes updates across multiple days if needed.
+        
+        Args:
+            updates: List of update messages from AI
+            commit_data: Original commit data for author info
+        """
+        if not updates:
+            logger.warning("No updates to distribute")
+            return
+        
+        # Pop the first update to send now
+        first_update = updates.pop(0)
+        
+        # Queue remaining updates for future days
+        if updates:
+            self.persistence.set_pending_updates(updates)
+            logger.info(f"Queued {len(updates)} updates for future delivery")
+        
+        # Send the first update
+        author = commit_data.get("author", self.DEFAULT_AUTHOR)
+        await self._send_formatted_update(first_update, author)
+    
+    async def _send_formatted_update(
+        self,
+        content: str,
+        author: str
+    ) -> None:
+        """
+        Formats and sends an update message to Telegram.
+        
+        Args:
+            content: The update content to send
+            author: The developer/author name
+        """
         date_str = datetime.now().strftime('%d.%m.%Y')
         
-        # İSTENİLEN FORMAT:
-        # 🚀 GÜNLÜK GELİŞTİRME RAPORU
-        # [İÇERİK]
-        # 👨‍💻 Geliştirici: ...
-        # 📅 Tarih: ...
-        
+        # Format the message with HTML styling
         final_message = (
-            f"🚀 <b>GÜNLÜK GELİŞTİRME RAPORU</b>\n\n"
+            f"🚀 <b>DAILY DEVELOPMENT REPORT</b>\n\n"
             f"{content}\n\n"
-            f"👨‍💻 <i>Geliştirici:</i> {author}\n"
-            f"📅 <i>Tarih:</i> {date_str}"
+            f"👨‍💻 <i>Developer:</i> {author}\n"
+            f"📅 <i>Date:</i> {date_str}"
         )
-        await self.telegram_service.send_message(final_message)
-
-    async def scheduler_loop(self):
-        schedule.every().day.at("17:00").do(lambda: asyncio.create_task(self.run_daily_task()))
+        
+        success = await self.telegram_service.send_message(final_message)
+        
+        if success:
+            logger.info("Update message delivered successfully")
+        else:
+            logger.error("Failed to deliver update message")
+    
+    async def scheduler_loop(self) -> None:
+        """
+        Runs the scheduling loop for automated daily updates.
+        
+        Schedules the daily task and continuously checks for
+        pending scheduled jobs.
+        """
+        logger.info(f"Scheduling daily updates at {self.DAILY_UPDATE_TIME}")
+        
+        schedule.every().day.at(self.DAILY_UPDATE_TIME).do(
+            lambda: asyncio.create_task(self.run_daily_task())
+        )
+        
         while True:
             schedule.run_pending()
             await asyncio.sleep(1)
+    
+    async def run(self) -> None:
+        """
+        Starts the bot and all its services.
+        
+        Runs both the Telegram polling and the scheduler loop
+        concurrently using asyncio.
+        """
+        logger.info("Starting Investor Bot services...")
+        
+        try:
+            await asyncio.gather(
+                self.telegram_service.start_polling(),
+                self.scheduler_loop()
+            )
+        except KeyboardInterrupt:
+            logger.info("Shutdown signal received")
+        except Exception as e:
+            logger.error(f"Unexpected error: {e}")
+        finally:
+            logger.info("Investor Bot shutting down...")
 
-    async def run(self):
-        await asyncio.gather(
-            self.telegram_service.start_polling(),
-            self.scheduler_loop()
-        )
 
-if __name__ == "__main__":
+def main() -> None:
+    """
+    Application entry point.
+    
+    Creates and runs the InvestorBot instance.
+    """
     bot = InvestorBot()
     asyncio.run(bot.run())
+
+
+if __name__ == "__main__":
+    main()

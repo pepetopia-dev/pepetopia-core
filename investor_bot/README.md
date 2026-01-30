@@ -1,7 +1,7 @@
 # 🐸 Pepetopia Investor Bot
 
 > **Located at:** `pepetopia-core/investor_bot`
-> *Turning complex code into clear updates for the Pepetopia community.*
+> _Turning complex code into clear updates for the Pepetopia community._
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue?style=flat-square)
 ![Solana](https://img.shields.io/badge/Solana-Build-purple?style=flat-square)
@@ -9,7 +9,7 @@
 
 ## 👋 Hello! What is this?
 
-Welcome to the **Investor Relations** engine of Pepetopia. 
+Welcome to the **Investor Relations** engine of Pepetopia.
 
 In the chaotic world of Memecoins, silence creates doubt. We believe in radical transparency. This bot is our automated storyteller; it wakes up every evening, checks what our developers have built, and translates those technical details into exciting, easy-to-understand updates for our Telegram community.
 
@@ -25,6 +25,15 @@ We don't just dump raw code logs. We use advanced AI to give you the "why" behin
 2.  **🧠 Translate:** It sends the technical data to **Google Gemini AI**, which rewrites it from "nerd-speak" to "investor-speak" (in Turkish 🇹🇷).
 3.  **📢 Broadcast:** It posts a polished daily report to our private Telegram channel.
 4.  **📝 Memory:** It remembers exactly where it left off, so you never miss an update.
+
+### 🤖 Smart Model Selection
+
+The bot automatically discovers all available Gemini models and selects the best one:
+
+- **Dynamic Discovery:** Fetches all models via Google's API using regex-based version parsing
+- **Intelligent Sorting:** Prioritizes by version (2.0 > 1.5) and tier (Ultra > Pro > Flash > Nano)
+- **Auto-Fallback:** When rate limits hit, seamlessly switches to the next available model
+- **Zero Downtime:** Continues operation even when primary models are unavailable
 
 ```mermaid
 graph LR
@@ -94,4 +103,3 @@ python main.py
 ---
 
 **Built with 💚 for the Pepetopia Community.**
-
