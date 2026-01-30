@@ -17,6 +17,7 @@ Author: Pepetopia Development Team
 import json
 import re
 import sys
+import time
 from dataclasses import dataclass
 from enum import IntEnum
 from typing import Any, Dict, List, Optional, Tuple
@@ -247,6 +248,10 @@ Make them feel excited about the progress!
         "These improvements will enhance the overall user experience."
     ]
     
+    # BUG FIX #3: Add retry configuration
+    MAX_RETRIES = 3
+    RETRY_DELAY_SECONDS = 5
+    
     def __init__(self):
         """
         Initializes the CommitSummarizer with API configuration.
@@ -393,6 +398,8 @@ Make them feel excited about the progress!
         to generate a summary. Automatically falls back to the next model
         if rate limits or errors are encountered.
         
+        BUG FIX #3: Implements retry logic with delays for rate limit handling.
+        
         Args:
             commit_data: Dictionary containing commit information including:
                 - files_analysis: String describing file changes
@@ -408,16 +415,24 @@ Make them feel excited about the progress!
         # Build the prompt
         prompt = self._build_prompt(commit_data)
         
-        # Try each model in priority order
-        for model_name in self.available_models:
-            result = self._try_generate_with_model(model_name, prompt)
+        # BUG FIX #3: Implement retry logic for rate limit handling
+        for attempt in range(self.MAX_RETRIES):
+            if attempt > 0:
+                logger.info(f"Retry attempt {attempt + 1}/{self.MAX_RETRIES} after delay...")
+                time.sleep(self.RETRY_DELAY_SECONDS * attempt)  # Exponential backoff
             
-            if result is not None:
-                logger.info(f"Summary generation completed with {len(result)} update(s)")
-                return result
+            # Try each model in priority order
+            for model_name in self.available_models:
+                result = self._try_generate_with_model(model_name, prompt)
+                
+                if result is not None:
+                    logger.info(f"Summary generation completed with {len(result)} update(s)")
+                    return result
+            
+            logger.warning(f"All models exhausted on attempt {attempt + 1}")
         
-        # All models failed - return fallback message
-        logger.error("All models exhausted. Returning fallback message.")
+        # All retries failed - return fallback message
+        logger.error(f"All {self.MAX_RETRIES} retry attempts failed. Returning fallback message.")
         return self.FALLBACK_MESSAGE
     
     def refresh_models(self) -> None:

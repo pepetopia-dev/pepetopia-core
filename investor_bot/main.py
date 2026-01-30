@@ -16,6 +16,7 @@ Author: Pepetopia Development Team
 """
 
 import asyncio
+import html
 from datetime import datetime
 from typing import Optional
 
@@ -105,6 +106,12 @@ class InvestorBot:
         """
         # Get all commits
         commits = self.github_service.get_all_commits()
+        
+        # BUG FIX #4: Handle empty commit list
+        if not commits:
+            logger.warning("No commits retrieved from GitHub. Repository may be empty or API failed.")
+            return
+        
         last_sha = self.persistence.get_last_processed_sha()
         
         # Find the next commit to process
@@ -128,10 +135,14 @@ class InvestorBot:
         updates_list = self.summarizer.analyze_and_split(detailed_data)
         
         # Send first update immediately, queue the rest
-        await self._distribute_updates(updates_list, detailed_data)
+        success = await self._distribute_updates(updates_list, detailed_data)
         
-        # Mark commit as processed
-        self.persistence.update_last_processed_sha(sha)
+        # BUG FIX #1: Only mark commit as processed if message was sent successfully
+        if success:
+            self.persistence.update_last_processed_sha(sha)
+            logger.info(f"Commit {sha[:8]} marked as processed")
+        else:
+            logger.error(f"Commit {sha[:8]} NOT marked as processed due to delivery failure")
     
     def _find_next_commit(
         self,
@@ -166,49 +177,64 @@ class InvestorBot:
         self,
         updates: list,
         commit_data: dict
-    ) -> None:
+    ) -> bool:
         """
         Distributes updates across multiple days if needed.
         
         Args:
             updates: List of update messages from AI
             commit_data: Original commit data for author info
+            
+        Returns:
+            True if all operations successful, False otherwise
         """
         if not updates:
             logger.warning("No updates to distribute")
-            return
+            return False
         
         # Pop the first update to send now
         first_update = updates.pop(0)
         
         # Queue remaining updates for future days
         if updates:
-            self.persistence.set_pending_updates(updates)
-            logger.info(f"Queued {len(updates)} updates for future delivery")
+            # BUG FIX #2: Check if queueing succeeded before proceeding
+            queue_success = self.persistence.set_pending_updates(updates)
+            if queue_success:
+                logger.info(f"Queued {len(updates)} updates for future delivery")
+            else:
+                logger.error("Failed to queue remaining updates. They will be lost.")
+                # Continue anyway to send at least the first update
         
         # Send the first update
         author = commit_data.get("author", self.DEFAULT_AUTHOR)
-        await self._send_formatted_update(first_update, author)
+        return await self._send_formatted_update(first_update, author)
     
     async def _send_formatted_update(
         self,
         content: str,
         author: str
-    ) -> None:
+    ) -> bool:
         """
         Formats and sends an update message to Telegram.
         
         Args:
             content: The update content to send
             author: The developer/author name
+            
+        Returns:
+            True if message was sent successfully, False otherwise
         """
         date_str = datetime.now().strftime('%d.%m.%Y')
+        
+        # BUG FIX #5: Escape HTML special characters to prevent injection
+        safe_author = html.escape(author)
+        safe_content = html.escape(content)
         
         # Format the message with HTML styling
         final_message = (
             f"🚀 <b>DAILY DEVELOPMENT REPORT</b>\n\n"
-            f"{content}\n\n"
-            f"👨‍💻 <i>Developer:</i> {author}\n"
+            f"{safe_content}\n\n"
+            f"👨‍💻 <i>Developer:</i> {safe_author}\n"
             f"📅 <i>Date:</i> {date_str}"
         )
         
@@ -218,6 +244,8 @@ class InvestorBot:
             logger.info("Update message delivered successfully")
         else:
             logger.error("Failed to deliver update message")
+        
+        return success
     
     async def scheduler_loop(self) -> None:
         """
