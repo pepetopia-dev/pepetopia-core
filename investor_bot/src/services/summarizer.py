@@ -1,55 +1,59 @@
 import google.generativeai as genai
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
 import sys
+import json
+import re
 from src.app_config import config
 
 class CommitSummarizer:
-    """
-    Uses Google's Gemini API to transform technical commit messages 
-    into investor-friendly summaries.
-    """
-
     def __init__(self):
         if not config.gemini_api_key:
-            print("ERROR: Gemini API Key is missing.")
             sys.exit(1)
-            
         genai.configure(api_key=config.gemini_api_key)
         self.model = genai.GenerativeModel('gemini-pro')
 
-    def summarize(self, commit_message: str, author: str) -> str:
+    def analyze_and_split(self, commit_data: dict) -> list[str]:
         """
-        Generates a non-technical summary of a git commit.
+        Returns a LIST of status updates (strings). 
+        If the commit is small, list has 1 item.
+        If huge, list has 2-3 items (Storytelling mode).
         """
+        
         prompt = (
-            f"Role: You are a Lead Developer updating non-technical investors.\n"
-            f"Task: Rewrite the following technical git commit message into a clear, "
-            f"positive, and professional status update in Turkish.\n"
-            f"Constraints:\n"
-            f"1. Do not use technical jargon (like refactoring, API, JSON, bugfix).\n"
-            f"2. Focus on the business value, user experience, or system stability.\n"
-            f"3. Keep it to 1 or 2 sentences max.\n"
-            f"4. Speak as if this work was done today.\n"
-            f"5. Mention that '{author}' completed this task if relevant.\n\n"
-            f"Technical Commit Message: '{commit_message}'\n\n"
-            f"Turkish Summary:"
+            f"Role: You are the Lead Developer of 'Pepetopia', a Solana memecoin project.\n"
+            f"Target Audience: Non-technical crypto investors.\n"
+            f"Goal: Explain the technical progress based on the code changes provided below.\n\n"
+            
+            f"INPUT DATA:\n"
+            f"Commit Message: {commit_data['message']}\n"
+            f"Files Changed & Code Snippets:\n{commit_data['files_analysis']}\n\n"
+            
+            f"INSTRUCTIONS:\n"
+            f"1. Analyze the code changes deeply. Don't just say 'files added'. Say 'Security protocols initialized' if you see .env or gitignore.\n"
+            f"2. IMPORTANT: If the changes are massive (like 'Initial commit' or >5 files), split the update into a 'Series' of 2 or 3 distinct messages to be sent on consecutive days.\n"
+            f"   - Day 1 focus: Infrastructure & Core Setup\n"
+            f"   - Day 2 focus: Security & Configuration\n"
+            f"   - Day 3 focus: Features & Logic\n"
+            f"3. If small change, just return 1 message.\n"
+            f"4. Tone: Hype, professional, transparent. Use emojis.\n"
+            f"5. OUTPUT FORMAT: strictly a JSON list of strings. Example: [\"Update 1 text...\", \"Update 2 text...\"]\n"
+            f"6. Do NOT use Markdown bold/italic inside the JSON strings yet, plain text with emojis is fine. I will format it later.\n"
+            f"7. Language: Turkish 🇹🇷."
         )
 
         try:
-            safety_settings = {
-                HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-                HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-                HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-            }
-
-            response = self.model.generate_content(prompt, safety_settings=safety_settings)
+            response = self.model.generate_content(prompt)
+            text = response.text.strip()
             
-            if response.text:
-                return response.text.strip()
-            else:
-                return "Bugün sistem altyapısında önemli iyileştirmeler yapıldı."
+            # Clean up markdown code blocks if AI adds them
+            if text.startswith("```json"):
+                text = text.replace("```json", "").replace("```", "")
+            
+            updates = json.loads(text)
+            
+            if isinstance(updates, list):
+                return updates
+            return [text] # Fallback if not list
 
         except Exception as e:
-            print(f"ERROR: AI Summarization failed. Details: {e}")
-            return f"Bugün geliştirme ekibi sistem üzerinde güncellemeler yaptı. (Detay: {commit_message})"
+            print(f"ERROR: AI Analysis failed. {e}")
+            return [f"🛠️ **Sistem Güncellemesi**\n\nEkibimiz kod tabanında önemli iyileştirmeler yaptı. ({commit_data['message']})"]

@@ -1,11 +1,11 @@
 import json
 import os
-from typing import Optional
+from typing import Optional, List
 
 class PersistenceManager:
     """
-    Manages the persistent state of the bot using a local JSON file.
-    Ensures the bot knows which commit was last processed to avoid duplicates.
+    Manages the persistent state of the bot.
+    Now supports a 'message queue' to split large updates across multiple days.
     """
 
     def __init__(self, file_path: str = "data/bot_state.json"):
@@ -13,38 +13,52 @@ class PersistenceManager:
         self._ensure_directory_exists()
 
     def _ensure_directory_exists(self):
-        """Creates the data directory if it does not exist."""
         directory = os.path.dirname(self.file_path)
         if directory and not os.path.exists(directory):
             os.makedirs(directory)
 
     def load_state(self) -> dict:
-        """Loads the state from the JSON file. Returns empty dict if file not found."""
         if not os.path.exists(self.file_path):
-            return {}
-        
+            return {"last_processed_sha": None, "pending_updates": []}
         try:
             with open(self.file_path, 'r') as f:
                 return json.load(f)
-        except (json.JSONDecodeError, IOError) as e:
-            print(f"WARNING: Corrupted state file. Starting fresh. Error: {e}")
-            return {}
+        except (json.JSONDecodeError, IOError):
+            return {"last_processed_sha": None, "pending_updates": []}
 
     def save_state(self, state: dict):
-        """Writes the current state to the JSON file safely."""
         try:
             with open(self.file_path, 'w') as f:
                 json.dump(state, f, indent=4)
         except IOError as e:
-            print(f"CRITICAL ERROR: Could not save state to {self.file_path}. Error: {e}")
+            print(f"CRITICAL ERROR: Could not save state. {e}")
 
     def get_last_processed_sha(self) -> Optional[str]:
-        """Retrieves the SHA of the last commit that was successfully sent."""
-        state = self.load_state()
-        return state.get("last_processed_sha")
+        return self.load_state().get("last_processed_sha")
 
     def update_last_processed_sha(self, sha: str):
-        """Updates the state with the new commit SHA."""
         state = self.load_state()
         state["last_processed_sha"] = sha
         self.save_state(state)
+
+    def get_pending_updates(self) -> List[str]:
+        """Returns the list of queued messages waiting to be sent."""
+        return self.load_state().get("pending_updates", [])
+
+    def set_pending_updates(self, updates: List[str]):
+        """Overwrites the pending updates queue."""
+        state = self.load_state()
+        state["pending_updates"] = updates
+        self.save_state(state)
+        
+    def pop_next_update(self) -> Optional[str]:
+        """Retrieves and removes the next update from the queue."""
+        state = self.load_state()
+        updates = state.get("pending_updates", [])
+        if not updates:
+            return None
+        
+        next_msg = updates.pop(0)
+        state["pending_updates"] = updates
+        self.save_state(state)
+        return next_msg

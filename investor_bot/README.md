@@ -1,6 +1,3 @@
----
-
-```markdown
 # 🐸 Pepetopia Investor Bot
 
 > **Located at:** `pepetopia-core/investor_bot`
@@ -98,7 +95,3 @@ python main.py
 
 **Built with 💚 for the Pepetopia Community.**
 
-```
-
-***
-```
