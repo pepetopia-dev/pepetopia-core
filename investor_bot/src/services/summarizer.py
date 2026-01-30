@@ -1,4 +1,5 @@
 import google.generativeai as genai
+from google.api_core import exceptions
 import sys
 import json
 import re
@@ -7,62 +8,129 @@ from src.app_config import config
 class CommitSummarizer:
     def __init__(self):
         if not config.gemini_api_key:
+            print("CRITICAL: Gemini API Key missing.")
             sys.exit(1)
         genai.configure(api_key=config.gemini_api_key)
-        self.model = genai.GenerativeModel('gemini-pro')
+
+    def _get_sorted_models(self):
+        """
+        Fetches all available Gemini models and sorts them by version (Newest -> Oldest).
+        Logic: High Version (1.5) > Model Type (Pro > Flash > Ultra)
+        """
+        try:
+            # 1. Google'dan tüm modelleri çek
+            all_models = genai.list_models()
+            
+            # 2. Sadece 'generateContent' yeteneği olan ve isminde 'gemini' geçenleri filtrele
+            gemini_models = [
+                m for m in all_models 
+                if 'generateContent' in m.supported_generation_methods 
+                and 'gemini' in m.name.lower()
+            ]
+
+            def model_sort_key(model):
+                """
+                Sorting Heuristic:
+                1. Version Number (1.5 > 1.0)
+                2. 'Pro' priority (Pro > Flash > others)
+                """
+                name = model.name.lower()
+                
+                # Regex ile versiyon numarasını bul (örn: gemini-1.5-pro -> 1.5)
+                version_match = re.search(r'(\d+\.\d+)', name)
+                version = float(version_match.group(1)) if version_match else 0.0
+                
+                # Model türüne puan ver
+                type_score = 0
+                if 'ultra' in name: type_score = 3
+                elif 'pro' in name: type_score = 2
+                elif 'flash' in name: type_score = 1
+                
+                return (version, type_score)
+
+            # 3. Sırala (Büyükten küçüğe)
+            sorted_models = sorted(gemini_models, key=model_sort_key, reverse=True)
+            
+            model_names = [m.name for m in sorted_models]
+            print(f"DEBUG: Discovered Models (Sorted): {model_names}")
+            return model_names
+
+        except Exception as e:
+            print(f"ERROR: Could not fetch model list. Defaulting to fallback list. {e}")
+            # API çalışmazsa manuel bir yedek listesi
+            return ["models/gemini-1.5-pro", "models/gemini-1.5-flash", "models/gemini-pro"]
 
     def analyze_and_split(self, commit_data: dict) -> list[str]:
         """
-        Analyzes code changes to generate detailed, story-driven updates.
-        Ignores raw commit messages in the final output.
+        Tries to generate content using the newest model. 
+        Falls back to older models if rate limit or 404 occurs.
         """
         
-        # Dosya analiz verisi yoksa (örn: binary dosya), mesajdan üretmeye çalış ama süsle.
         files_analysis = commit_data.get('files_analysis', 'No detailed file changes available.')
 
         prompt = (
             f"Role: You are the Lead Developer of 'Pepetopia', a Solana memecoin project.\n"
-            f"Task: Write a daily development update based ONLY on the code changes (patches) below.\n"
-            f"Target Audience: Non-technical crypto investors who want to feel the project is active and professional.\n\n"
+            f"Target Audience: Non-technical crypto investors.\n"
+            f"Task: Create a story-driven update based on the code changes below.\n\n"
             
-            f"🚫 CONSTRAINT 1: NEVER output the raw commit message (e.g. 'feat: initial commit'). Ignore it completely in the output.\n"
-            f"🚫 CONSTRAINT 2: Do NOT mention specific filenames (like 'main.py' or 'utils.py'). Use concepts like 'AI Engine', 'Blockchain Connectivity', 'Security Layer'.\n\n"
+            f"STRICT RULES:\n"
+            f"1. Ignore the raw commit message text. Focus on the 'Code Changes'.\n"
+            f"2. Output MUST be a valid JSON List of strings. Example: [\"Update part 1\", \"Update part 2\"]\n"
+            f"3. Do NOT use Markdown code blocks (```json). Just raw JSON.\n"
+            f"4. Language: Turkish 🇹🇷.\n"
+            f"5. If 'Code Changes' are empty or binary, make up a generic but professional update about 'System Optimization'.\n\n"
             
-            f"INPUT DATA:\n"
-            f"Commit Message (For context only): {commit_data['message']}\n"
-            f"Code Changes (THE REAL TRUTH): \n{files_analysis}\n\n"
-            
-            f"INSTRUCTIONS:\n"
-            f"1. Analyze the code changes. If you see '.env', talk about Security. If you see 'requirements.txt', talk about Infrastructure. If you see 'bot', talk about AI logic.\n"
-            f"2. Write a detailed, exciting story. Explain WHY this change matters.\n"
-            f"3. IF the changes are huge (many files), split the story into a JSON LIST of 2 or 3 strings. [\"Part 1 text\", \"Part 2 text\"].\n"
-            f"   - Spread the excitement over multiple days.\n"
-            f"4. IF changes are small, return a JSON LIST with 1 string.\n"
-            f"5. Output Language: Turkish 🇹🇷.\n"
-            f"6. Format: Plain text with Emojis. (No markdown headers like **Title** inside the text, just the content).\n"
-            f"7. OUTPUT FORMAT: Strictly a JSON List of strings. Example: [\"Bugün altyapıda devrim yaptık...\", \"Güvenlik protokollerini sıkılaştırdık...\"]"
+            f"INPUT CONTEXT:\n"
+            f"Code Changes: \n{files_analysis}\n"
         )
 
-        try:
-            response = self.model.generate_content(prompt)
-            text = response.text.strip()
-            
-            # Clean up markdown code blocks if AI adds them
-            if text.startswith("```json"):
-                text = text.replace("```json", "").replace("```", "")
-            
-            updates = json.loads(text)
-            
-            if isinstance(updates, list):
-                return updates
-            return [text] # Fallback if not list
+        # Dinamik model listesini al
+        available_models = self._get_sorted_models()
 
-        except Exception as e:
-            print(f"ERROR: AI Analysis failed. {e}")
-            # HATA DURUMUNDA ARTIK COMMIT MESAJINI BASMIYORUZ.
-            # Onun yerine genel geçer, havalı bir mesaj dönüyoruz.
-            return [
-                "🛠️ **Altyapı Güçlendirme Çalışması**\n\n"
-                "Ekibimiz bugün sistemin çekirdek modüllerinde performans optimizasyonları gerçekleştirdi. "
-                "Veri akışını hızlandırmak ve güvenliği artırmak adına arka planda önemli kod refactoring işlemleri tamamlandı."
-            ]
+        last_error = None
+
+        # Modelleri sırayla dene
+        for model_name in available_models:
+            try:
+                print(f"INFO: Trying model: {model_name}...")
+                model = genai.GenerativeModel(model_name)
+                
+                response = model.generate_content(
+                    prompt,
+                    generation_config={"response_mime_type": "application/json"}
+                )
+                
+                text = response.text.strip()
+                
+                # Temizlik
+                if text.startswith("```json"):
+                    text = text.replace("```json", "").replace("```", "")
+                elif text.startswith("```"):
+                    text = text.replace("```", "")
+                
+                updates = json.loads(text)
+                
+                print(f"SUCCESS: Model {model_name} generated response successfully.")
+                
+                if isinstance(updates, list):
+                    return updates
+                return [text]
+
+            except exceptions.NotFound:
+                print(f"WARNING: Model {model_name} not found (404). Trying next...")
+                continue # Bir sonrakine geç
+            except exceptions.ResourceExhausted:
+                print(f"WARNING: Model {model_name} rate limit exceeded (429). Trying next...")
+                continue # Bir sonrakine geç
+            except Exception as e:
+                print(f"ERROR: Failed with {model_name}. Details: {e}")
+                last_error = e
+                continue # Diğer hatalarda da şansımızı diğer modelde deneyelim
+
+        # Eğer döngü biter ve hiçbir model çalışmazsa:
+        print("CRITICAL: All AI models failed.")
+        return [
+            "🛠️ **Altyapı Güçlendirme Çalışması**\n\n"
+            "Ekibimiz bugün sistemin çekirdek modüllerinde performans optimizasyonları gerçekleştirdi. "
+            "Sistem kararlılığını artırmak adına arka planda önemli bakım işlemleri tamamlandı."
+        ]
