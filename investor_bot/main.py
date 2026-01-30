@@ -26,11 +26,13 @@ class InvestorBot:
             print(f"INFO: Found {len(pending_updates)} pending updates in queue. Sending next one.")
             next_msg = self.persistence.pop_next_update()
             
-            # Format and Send
-            await self._send_formatted_update(next_msg, "Devam Eden Geliştirme")
+            # Kuyruktan gelen mesajı yazar bilgisi olmadan (veya generic) gönderebiliriz
+            # Ama tutarlılık için son yazar bilgisini saklamak daha iyi olurdu. 
+            # Şimdilik "Pepetopia Team" varsayalım veya önceki mantığı koruyalım.
+            await self._send_formatted_update(next_msg, "pepetopia-dev") 
             return
 
-        # 2. FETCH NEW COMMIT (Eğer kuyruk boşsa)
+        # 2. FETCH NEW COMMIT
         commits = self.github_service.get_all_commits()
         last_sha = self.persistence.get_last_processed_sha()
         
@@ -47,12 +49,12 @@ class InvestorBot:
             print("INFO: No new commits.")
             return
 
-        # 3. ANALYZE (Detaylı Analiz)
+        # 3. ANALYZE
         print(f"INFO: Analyzing commit {commit_to_process['sha']}...")
         detailed_data = self.github_service.get_commit_details(commit_to_process["sha"])
         
         if detailed_data:
-            # AI returns a LIST of updates (1, 2 or 3 items)
+            # AI returns a LIST of updates
             updates_list = self.summarizer.analyze_and_split(detailed_data)
             
             # Pop the first one to send NOW
@@ -69,10 +71,15 @@ class InvestorBot:
             await self._send_formatted_update(first_update, detailed_data['author'])
 
     async def _send_formatted_update(self, content, author):
-        """Formats the message in HTML and sends it."""
+        """Formats the message exactly as requested."""
         date_str = datetime.now().strftime('%d.%m.%Y')
         
-        # HTML Formatting
+        # İSTENİLEN FORMAT:
+        # 🚀 GÜNLÜK GELİŞTİRME RAPORU
+        # [İÇERİK]
+        # 👨‍💻 Geliştirici: ...
+        # 📅 Tarih: ...
+        
         final_message = (
             f"🚀 <b>GÜNLÜK GELİŞTİRME RAPORU</b>\n\n"
             f"{content}\n\n"

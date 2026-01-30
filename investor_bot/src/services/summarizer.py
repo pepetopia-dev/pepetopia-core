@@ -13,31 +13,34 @@ class CommitSummarizer:
 
     def analyze_and_split(self, commit_data: dict) -> list[str]:
         """
-        Returns a LIST of status updates (strings). 
-        If the commit is small, list has 1 item.
-        If huge, list has 2-3 items (Storytelling mode).
+        Analyzes code changes to generate detailed, story-driven updates.
+        Ignores raw commit messages in the final output.
         """
         
+        # Dosya analiz verisi yoksa (örn: binary dosya), mesajdan üretmeye çalış ama süsle.
+        files_analysis = commit_data.get('files_analysis', 'No detailed file changes available.')
+
         prompt = (
             f"Role: You are the Lead Developer of 'Pepetopia', a Solana memecoin project.\n"
-            f"Target Audience: Non-technical crypto investors.\n"
-            f"Goal: Explain the technical progress based on the code changes provided below.\n\n"
+            f"Task: Write a daily development update based ONLY on the code changes (patches) below.\n"
+            f"Target Audience: Non-technical crypto investors who want to feel the project is active and professional.\n\n"
+            
+            f"🚫 CONSTRAINT 1: NEVER output the raw commit message (e.g. 'feat: initial commit'). Ignore it completely in the output.\n"
+            f"🚫 CONSTRAINT 2: Do NOT mention specific filenames (like 'main.py' or 'utils.py'). Use concepts like 'AI Engine', 'Blockchain Connectivity', 'Security Layer'.\n\n"
             
             f"INPUT DATA:\n"
-            f"Commit Message: {commit_data['message']}\n"
-            f"Files Changed & Code Snippets:\n{commit_data['files_analysis']}\n\n"
+            f"Commit Message (For context only): {commit_data['message']}\n"
+            f"Code Changes (THE REAL TRUTH): \n{files_analysis}\n\n"
             
             f"INSTRUCTIONS:\n"
-            f"1. Analyze the code changes deeply. Don't just say 'files added'. Say 'Security protocols initialized' if you see .env or gitignore.\n"
-            f"2. IMPORTANT: If the changes are massive (like 'Initial commit' or >5 files), split the update into a 'Series' of 2 or 3 distinct messages to be sent on consecutive days.\n"
-            f"   - Day 1 focus: Infrastructure & Core Setup\n"
-            f"   - Day 2 focus: Security & Configuration\n"
-            f"   - Day 3 focus: Features & Logic\n"
-            f"3. If small change, just return 1 message.\n"
-            f"4. Tone: Hype, professional, transparent. Use emojis.\n"
-            f"5. OUTPUT FORMAT: strictly a JSON list of strings. Example: [\"Update 1 text...\", \"Update 2 text...\"]\n"
-            f"6. Do NOT use Markdown bold/italic inside the JSON strings yet, plain text with emojis is fine. I will format it later.\n"
-            f"7. Language: Turkish 🇹🇷."
+            f"1. Analyze the code changes. If you see '.env', talk about Security. If you see 'requirements.txt', talk about Infrastructure. If you see 'bot', talk about AI logic.\n"
+            f"2. Write a detailed, exciting story. Explain WHY this change matters.\n"
+            f"3. IF the changes are huge (many files), split the story into a JSON LIST of 2 or 3 strings. [\"Part 1 text\", \"Part 2 text\"].\n"
+            f"   - Spread the excitement over multiple days.\n"
+            f"4. IF changes are small, return a JSON LIST with 1 string.\n"
+            f"5. Output Language: Turkish 🇹🇷.\n"
+            f"6. Format: Plain text with Emojis. (No markdown headers like **Title** inside the text, just the content).\n"
+            f"7. OUTPUT FORMAT: Strictly a JSON List of strings. Example: [\"Bugün altyapıda devrim yaptık...\", \"Güvenlik protokollerini sıkılaştırdık...\"]"
         )
 
         try:
@@ -56,4 +59,10 @@ class CommitSummarizer:
 
         except Exception as e:
             print(f"ERROR: AI Analysis failed. {e}")
-            return [f"🛠️ **Sistem Güncellemesi**\n\nEkibimiz kod tabanında önemli iyileştirmeler yaptı. ({commit_data['message']})"]
+            # HATA DURUMUNDA ARTIK COMMIT MESAJINI BASMIYORUZ.
+            # Onun yerine genel geçer, havalı bir mesaj dönüyoruz.
+            return [
+                "🛠️ **Altyapı Güçlendirme Çalışması**\n\n"
+                "Ekibimiz bugün sistemin çekirdek modüllerinde performans optimizasyonları gerçekleştirdi. "
+                "Veri akışını hızlandırmak ve güvenliği artırmak adına arka planda önemli kod refactoring işlemleri tamamlandı."
+            ]
