@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 # Constants
 TELEGRAM_TOKEN: str | None = os.getenv("TELEGRAM_BOT_TOKEN")
-GROUP_ID: str | None = os.getenv("TELEGRAM_GROUP_ID")
+CHAT_ID: str | None = os.getenv("TELEGRAM_CHAT_ID")
 DIARY_FILE_PATH: str = "project_diary.md"
 TR_TIMEZONE = pytz.timezone("Europe/Istanbul")
 
@@ -110,9 +110,9 @@ async def scheduled_report_job(context: ContextTypes.DEFAULT_TYPE):
     logger.info("Running scheduled job...")
     report_text = await get_daily_report_text()
     
-    if report_text and GROUP_ID:
+    if report_text and CHAT_ID:
         await context.bot.send_message(
-            chat_id=GROUP_ID,
+            chat_id=CHAT_ID,
             text=report_text,
             parse_mode='Markdown'
         )
