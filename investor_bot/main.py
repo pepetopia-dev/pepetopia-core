@@ -117,15 +117,16 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Responds to /help. Lists available commands.
     """
+    # Not: Telegram Markdown modunda _ karakteri italik anlamına gelir ve hata yaratır.
+    # Komutları ` (backtick) içine alarak bu sorunu çözüyoruz.
     help_text = (
-        "🤖 **Mevcut Komutlar:**\n\n"
-        "/start - Botu başlatır ve tanışır.\n"
-        "/anlik_fiyat - Güncel AscendEX verilerini getirir.\n"
-        "/now - (Admin) Bugünün raporunu anında gönderir.\n"
-        "/status - Sistem durumunu ve sunucu saatini gösterir.\n"
+        "🤖 *Mevcut Komutlar:*\n\n"
+        "`/start` - Botu başlatır ve tanışır.\n"
+        "`/anlik_fiyat` - Güncel AscendEX verilerini getirir.\n"
+        "`/now` - (Admin) Bugünün raporunu anında gönderir.\n"
+        "`/status` - Sistem durumunu ve sunucu saatini gösterir.\n"
     )
     await update.message.reply_text(help_text, parse_mode='Markdown')
-
 async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Responds to /anlik_fiyat. Sends current market data.
