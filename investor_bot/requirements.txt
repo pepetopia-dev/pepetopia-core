@@ -2,3 +2,4 @@ python-telegram-bot[job-queue]
 schedule
 python-dotenv
 pytz
+requests
