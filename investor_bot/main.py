@@ -43,28 +43,24 @@ def get_pepetopia_data() -> dict | None:
         data = response.json()
         
         # AscendEX API response structure verification
+# ... önceki kodlar ...
         if data.get('code') == 0 and 'data' in data:
             ticker = data['data']
             
-            # Extracting key metrics
             price = float(ticker.get('close', 0))
-            change_24h = float(ticker.get('close', 0)) - float(ticker.get('open', 0)) # Simple diff
-            # Or usually API gives percent change directly, but AscendEX ticker gives open/close
-            # Let's calculate percentage if not provided directly
-            open_price = float(ticker.get('open', 1)) # avoid division by zero
+            open_price = float(ticker.get('open', 1))
             change_percent = ((price - open_price) / open_price) * 100
             
-            volume = float(ticker.get('volume', 0))
+            # DÜZELTME: Token adedini fiyatla çarparak Dolar (USDT) hacmini buluyoruz
+            token_volume = float(ticker.get('volume', 0))
+            usd_volume = token_volume * price 
             
             return {
-                "price": f"${price:.6f}", # 6 decimal places for small caps
+                "price": f"${price:.6f}",
                 "change_percent": change_percent,
-                "volume": f"${volume:,.0f}"
+                "volume": f"${usd_volume:,.0f}" # Artık Dolar değeri olarak görünecek
             }
-        else:
-            logger.error(f"AscendEX API Error: {data}")
-            return None
-
+# ... kalan kodlar ...
     except Exception as e:
         logger.error(f"Error fetching price: {e}")
         return None
