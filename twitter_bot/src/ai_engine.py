@@ -1,5 +1,5 @@
-import google.generativeai as genai
-from google.api_core import exceptions
+from google import genai
+from google.genai import types
 import logging
 import re
 import json
@@ -9,7 +9,6 @@ from src.utils import extract_url_content
 logger = logging.getLogger(__name__)
 
 # --- 1. X ALGORITHM RULES (IMMUTABLE CORE) ---
-# Derived strictly from 'home-mixer/scorers/weighted_scorer.rs'
 X_ALGO_RULES = """
 --- X ALGORITHM OPTIMIZATION RULES ---
 Your output MUST maximize these internal scoring variables:
@@ -21,13 +20,12 @@ Your output MUST maximize these internal scoring variables:
 """
 
 # --- 2. REFINED PERSONA DEFINITIONS ---
-# Removed specific language obsessions (like Rust) to prevent topic drift.
 PERSONAS = {
     "dev": {
         "role": "THE ARCHITECT (@pepetopia_dev)",
         "tone": "Solution-Oriented, Transparent, 'Builder-to-Builder', Analytical.",
         "goals": "Build trust through technical competence. Explain mechanics, not just tools. NO SHILLING.",
-        "style_guide": "Focus on architecture, latency, security, and logic. Do not mention specific languages (like Rust) unless the user asks.",
+        "style_guide": "Focus on architecture, latency, security, and logic. Do not mention specific languages unless asked.",
         "drift_guard": "STAY ON TOPIC. Do not pivot to random tech stacks."
     },
     "brand": {
@@ -40,10 +38,6 @@ PERSONAS = {
 }
 
 class StrategyEngine:
-    """
-    Orchestrates the prompt construction and strategy selection.
-    """
-    
     @staticmethod
     def construct_adaptive_prompt(user_input: str, persona_key: str) -> str:
         persona = PERSONAS.get(persona_key, PERSONAS["brand"])
@@ -56,30 +50,30 @@ Constraint: {persona['drift_guard']}
 
 {X_ALGO_RULES}
 
---- INPUT CONTEXT (Analyze this deeply) ---
+--- INPUT CONTEXT ---
 "{user_input}"
 
 --- MISSION ---
 Generate 3 HIGH-RANKING tweet options acting strictly as {persona['role']}.
-CRITICAL: You must stick to the subject matter of the INPUT CONTEXT. Do not hallucinate unrelated technologies or topics.
+CRITICAL: You must stick to the subject matter of the INPUT CONTEXT.
 
 --- STRATEGY MODES (Choose 3 distinct ones) ---
-1. MODE_TECHNICAL_DEEP_DIVE (Target: DWELL_TIME) -> Best for detailed analysis.
-2. MODE_CONTROVERSIAL_TAKE (Target: REPLY_WEIGHT) -> Best for sparking debate.
-3. MODE_VISUAL_ALPHA (Target: PHOTO_EXPAND_WEIGHT) -> Best for charts/evidence.
-4. MODE_ECOSYSTEM_BAIT (Target: PROFILE_CLICK_WEIGHT) -> Best for funneling traffic.
+1. MODE_TECHNICAL_DEEP_DIVE (Target: DWELL_TIME)
+2. MODE_CONTROVERSIAL_TAKE (Target: REPLY_WEIGHT)
+3. MODE_VISUAL_ALPHA (Target: PHOTO_EXPAND_WEIGHT)
+4. MODE_ECOSYSTEM_BAIT (Target: PROFILE_CLICK_WEIGHT)
 
 --- OUTPUT FORMAT (JSON ONLY) ---
 Output purely valid JSON. No markdown formatting.
 {{
-  "analysis_summary": "Brief analysis of the input and why these strategies fit.",
+  "analysis_summary": "Brief analysis.",
   "options": [
     {{
       "strategy_mode": "MODE_NAME",
       "target_metric": "ALGO_VARIABLE",
       "score_prediction": 95,
-      "visual_cue": "Specific description of image/video.",
-      "tweet_content": "Tweet text here. End with #{'PepetopiaDev' if persona_key == 'dev' else 'Pepetopia'}."
+      "visual_cue": "Description.",
+      "tweet_content": "Content here. End with #{'PepetopiaDev' if persona_key == 'dev' else 'Pepetopia'}."
     }}
   ]
 }}
@@ -87,28 +81,38 @@ Output purely valid JSON. No markdown formatting.
 
 class ModelManager:
     """
-    Handles model selection, rotation, and reliability.
+    Handles model selection using the NEW google-genai SDK.
     """
+    _client = None
     _cached_models = []
     _current_index = 0
 
     @classmethod
+    def get_client(cls):
+        if not cls._client:
+            cls._client = genai.Client(api_key=Config.GEMINI_API_KEY)
+        return cls._client
+
+    @classmethod
     def get_rotated_list(cls):
-        """Discovers models and rotates them to ensure high availability."""
         if not cls._cached_models:
             try:
-                logger.info("📡 Discovering Gemini models...")
-                genai.configure(api_key=Config.GEMINI_API_KEY)
-                all_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods and 'gemini' in m.name]
-                # Sort by version (newest first)
-                all_models.sort(key=lambda x: x, reverse=True) 
-                cls._cached_models = all_models if all_models else ["models/gemini-1.5-pro"]
+                client = cls.get_client()
+                logger.info("📡 Discovering Gemini models via new SDK...")
+                # List models and filter for Gemini generation models
+                all_models = [
+                    m.name for m in client.models.list() 
+                    if 'gemini' in m.name and 'generateContent' in (m.supported_generation_methods or [])
+                ]
+                # Sort: Newest first (Basic string sort works well for gemini-2.0 vs 1.5)
+                all_models.sort(reverse=True)
+                
+                cls._cached_models = all_models if all_models else ["gemini-2.0-flash", "gemini-1.5-pro"]
                 logger.info(f"✅ Active Models: {cls._cached_models}")
             except Exception as e:
                 logger.error(f"❌ Model discovery failed: {e}")
-                return ["models/gemini-1.5-flash"]
+                return ["gemini-1.5-flash"]
 
-        # Rotate logic
         if cls._current_index >= len(cls._cached_models):
             cls._current_index = 0
         return cls._cached_models[cls._current_index:] + cls._cached_models[:cls._current_index]
@@ -119,70 +123,61 @@ class ModelManager:
             cls._current_index = cls._cached_models.index(model_name)
 
 def analyze_and_draft(user_input: str) -> str:
-    """
-    Main pipeline: Routing -> Fetching -> Sanitizing -> Generating.
-    """
-    # 1. ROUTING LAYER (Detect Persona)
-    persona_key = "brand" 
+    # 1. ROUTING
+    persona_key = "brand"
     clean_input = user_input
-    
     match = re.search(r'(@pepetopia_dev|@pepetopia)\s*$', user_input, re.IGNORECASE)
     if match:
         tag = match.group(1).lower()
         persona_key = "dev" if "dev" in tag else "brand"
         clean_input = user_input[:match.start()].strip()
 
-    # 2. ENRICHMENT LAYER (Fetch URL Content)
-    # This solves the "link understanding" issue
+    # 2. ENRICHMENT & SANITIZATION
     enriched_input = extract_url_content(clean_input)
+    sanitized_input = enriched_input[:2000]
 
-    # 3. SANITIZATION (Security)
-    # Allow more characters for URL content, but strip dangerous patterns
-    sanitized_input = enriched_input[:2000] 
-
-    # 4. GENERATION LAYER
+    # 3. GENERATION (NEW SDK)
     candidate_models = ModelManager.get_rotated_list()
     final_prompt = StrategyEngine.construct_adaptive_prompt(sanitized_input, persona_key)
+    client = ModelManager.get_client()
 
     for model_name in candidate_models:
         try:
-            model = genai.GenerativeModel(
-                model_name, 
-                system_instruction="You are a strict JSON generator. Do not output markdown code blocks."
+            # Clean model name if it has 'models/' prefix (Old SDK legacy)
+            clean_model_name = model_name.replace("models/", "")
+            
+            response = client.models.generate_content(
+                model=clean_model_name,
+                contents=final_prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json"  # Native JSON enforcement!
+                )
             )
             
-            response = model.generate_content(final_prompt)
+            # Parsing
             raw_text = response.text.strip()
-            
-            # Clean Markdown wrappers if present
-            if raw_text.startswith("```"):
-                raw_text = re.sub(r"^```json|^```|```$", "", raw_text, flags=re.MULTILINE).strip()
-
             data = json.loads(raw_text)
             
             ModelManager.update_champion(model_name)
-            return format_telegram_response(data, model_name, persona_key)
+            return format_telegram_response(data, clean_model_name, persona_key)
 
-        except (exceptions.GoogleAPICallError, json.JSONDecodeError, Exception) as e:
+        except Exception as e:
             logger.error(f"❌ Failure on {model_name}: {e}")
             continue
 
-    return "🚫 CRITICAL ERROR: All AI models failed. Check logs."
+    return "🚫 CRITICAL ERROR: All AI models failed."
 
 def format_telegram_response(data: dict, model_name: str, persona_key: str) -> str:
     analysis = data.get("analysis_summary", "N/A")
     options = data.get("options", [])
-    
     header = "👨‍💻 **ARCHITECT MODE**" if persona_key == "dev" else "👑 **VISIONARY MODE**"
     
     output = f"{header}\n🧠 _{analysis}_\n\n"
-    
     for i, opt in enumerate(options, 1):
         output += (
             f"🔹 **Option {i}: {opt.get('strategy_mode')}** (Score: {opt.get('score_prediction')})\n"
             f"🖼️ *Visual:* {opt.get('visual_cue')}\n"
             f"📋 `COPY:`\n{opt.get('tweet_content')}\n\n"
         )
-        
-    output += f"⚙️ *Engine: {model_name.replace('models/', '')}*"
+    output += f"⚙️ *Engine: {model_name}*"
     return output
