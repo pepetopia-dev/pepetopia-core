@@ -1,84 +1,53 @@
 import logging
-import json
-import os
-import sys
-from datetime import datetime
-import pytz
-from typing import List
-from src.app_config import Config
+import re
+import requests
+from bs4 import BeautifulSoup
 
-# --- WINDOWS UNICODE FIX ---
-# Windows terminalinin UTF-8 basabilmesi için stdout'u yeniden yapılandırıyoruz.
-if sys.platform == "win32":
-    sys.stdout.reconfigure(encoding='utf-8')
-    sys.stderr.reconfigure(encoding='utf-8')
-
-# Configure Structured Logging
-# FileHandler için utf-8 zorluyoruz.
-file_handler = logging.FileHandler("bot_activity.log", encoding='utf-8')
-console_handler = logging.StreamHandler(sys.stdout) # Stdout zaten fixlendi
-
-logging.basicConfig(
-    format='%(asctime)s - [%(levelname)s] - %(module)s - %(message)s',
-    level=logging.INFO,
-    handlers=[
-        file_handler,
-        console_handler
-    ]
-)
 logger = logging.getLogger(__name__)
 
-def is_working_hours() -> bool:
+def extract_url_content(text: str) -> str:
     """
-    Checks if current time is within the defined working schedule.
-    Returns:
-        bool: True if within working hours OR if DEV_MODE is active.
+    Detects if the input contains a URL. If yes, fetches the page title
+    and meta description to provide context to the AI.
     """
-    if Config.DEV_MODE:
-        return True
-
-    tz = pytz.timezone(Config.TIMEZONE)
-    now = datetime.now(tz)
+    url_pattern = r'(https?://\S+)'
+    match = re.search(url_pattern, text)
     
-    if 1 <= now.hour < Config.WORK_START_HOUR:
-        return False
-    return True
+    if not match:
+        return text  # No URL found, return original text
 
-class StateManager:
-    """
-    Handles local persistence.
-    """
-    DATA_FILE = "data/seen_tweets.json"
+    url = match.group(1)
+    logger.info(f"🔗 Detected URL: {url}. Fetching metadata...")
 
-    @staticmethod
-    def _ensure_dir():
-        os.makedirs(os.path.dirname(StateManager.DATA_FILE), exist_ok=True)
+    try:
+        # User-Agent is required to avoid being blocked by some sites (like Twitter/X)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        response = requests.get(url, headers=headers, timeout=5)
+        response.raise_for_status()
 
-    @staticmethod
-    def load_seen_tweets() -> List[str]:
-        if not os.path.exists(StateManager.DATA_FILE):
-            return []
-        try:
-            with open(StateManager.DATA_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except (json.JSONDecodeError, IOError):
-            logger.error("Failed to load seen tweets database. Starting fresh.")
-            return []
-
-    @staticmethod
-    def save_tweet_id(tweet_id: str):
-        StateManager._ensure_dir()
-        seen = StateManager.load_seen_tweets()
+        soup = BeautifulSoup(response.text, 'html.parser')
         
-        if tweet_id not in seen:
-            seen.append(tweet_id)
-            if len(seen) > 1000:
-                seen = seen[-1000:]
-            
-            with open(StateManager.DATA_FILE, 'w', encoding='utf-8') as f:
-                json.dump(seen, f)
-    
-    @staticmethod
-    def is_seen(tweet_id: str) -> bool:
-        seen = StateManager.load_seen_tweets()
-        return tweet_id in seen
+        # Extract Title
+        title = soup.title.string.strip() if soup.title else "No Title"
+        
+        # Extract Description
+        meta_desc = soup.find('meta', attrs={'name': 'description'}) or \
+                    soup.find('meta', attrs={'property': 'og:description'})
+        description = meta_desc['content'].strip() if meta_desc else "No Description"
+
+        # Enhance the input text with fetched context
+        enriched_context = (
+            f"Original Input: {text}\n"
+            f"--- LINK CONTENT ---\n"
+            f"URL: {url}\n"
+            f"Page Title: {title}\n"
+            f"Summary: {description}\n"
+            f"--------------------"
+        )
+        return enriched_context
+
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to fetch URL content: {e}")
+        return text  # Fallback to original text on failure

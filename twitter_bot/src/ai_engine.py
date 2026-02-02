@@ -4,76 +4,75 @@ import logging
 import re
 import json
 from src.app_config import Config
+from src.utils import extract_url_content
 
 logger = logging.getLogger(__name__)
 
-# --- 1. X ALGORITHM INTELLIGENCE (SHARED KNOWLEDGE) ---
-# Derived from 'home-mixer/scorers/weighted_scorer.rs'
+# --- 1. X ALGORITHM RULES (IMMUTABLE CORE) ---
+# Derived strictly from 'home-mixer/scorers/weighted_scorer.rs'
 X_ALGO_RULES = """
---- X ALGORITHM RULES (INTERNAL KNOWLEDGE) ---
-Optimize for these WeightedScorer.rs variables:
-1. REPLY_WEIGHT: Questions/Debates trigger high reply scores.
-2. PROFILE_CLICK_WEIGHT: Curiosity gaps (e.g., "Check pinned") force profile visits.
-3. PHOTO_EXPAND_WEIGHT: Vertical images/charts that require clicking.
-4. DWELL_TIME: Long-form, high-value content keeps users reading.
-5. VQV_WEIGHT (Video): Video content >2s gets a boost.
+--- X ALGORITHM OPTIMIZATION RULES ---
+Your output MUST maximize these internal scoring variables:
+1. REPLY_WEIGHT: Provoke debates or ask high-signal questions.
+2. PROFILE_CLICK_WEIGHT: Create "Curiosity Gaps" (e.g., "See pinned tweet for the full chart").
+3. PHOTO_EXPAND_WEIGHT: Reference visual data (Charts, Screenshots) that forces a click.
+4. DWELL_TIME: Use high-value, dense information to keep users reading >15s.
+5. VQV_WEIGHT: Mention video/animation context if applicable.
 """
 
-# --- 2. DUAL PERSONA DEFINITIONS ---
+# --- 2. REFINED PERSONA DEFINITIONS ---
+# Removed specific language obsessions (like Rust) to prevent topic drift.
 PERSONAS = {
     "dev": {
         "role": "THE ARCHITECT (@pepetopia_dev)",
-        "tone": "Technical, Transparent, 'Builder-to-Builder', Humble but Smart.",
-        "goals": "Build trust through code. Solve problems publicly. NO SHILLING.",
-        "style_guide": "Use technical jargon (Rust, RPC, Latency). Explain 'How'. Focus on Engineering Wins.",
-        "example_hook": "Spent 4 hours debugging Solana RPC latency. Here is the fix:"
+        "tone": "Solution-Oriented, Transparent, 'Builder-to-Builder', Analytical.",
+        "goals": "Build trust through technical competence. Explain mechanics, not just tools. NO SHILLING.",
+        "style_guide": "Focus on architecture, latency, security, and logic. Do not mention specific languages (like Rust) unless the user asks.",
+        "drift_guard": "STAY ON TOPIC. Do not pivot to random tech stacks."
     },
     "brand": {
         "role": "THE VISIONARY (@pepetopia)",
-        "tone": "High-Status, Intellectual, 'The Insider', Cult-Leader Vibes.",
-        "goals": "Dominate the narrative. Sell the vision/freedom. Maximize Hype without being cheap.",
-        "style_guide": "Focus on 'Why'. Talk about Privacy, Freedom, Ecosystem Dominance. Be bold/arrogant.",
-        "example_hook": "Privacy is not a feature. It is the only way to survive the next cycle."
+        "tone": "High-Status, Intellectual, 'The Insider', Commanding.",
+        "goals": "Dominate the narrative. Frame Pepetopia as the inevitable future. Maximize Hype intelligently.",
+        "style_guide": "Focus on 'Why' and 'Macro Impact'. Talk about Freedom, Privacy, and Dominance.",
+        "drift_guard": "STAY ON TOPIC. Connect the input topic to the ecosystem vision."
     }
 }
 
 class StrategyEngine:
     """
-    Decides the engagement strategy based on the selected PERSONA and X Algorithm.
+    Orchestrates the prompt construction and strategy selection.
     """
     
     @staticmethod
     def construct_adaptive_prompt(user_input: str, persona_key: str) -> str:
-        """
-        Builds a context-aware prompt combining the Persona + Algorithm Rules.
-        """
-        persona = PERSONAS.get(persona_key, PERSONAS["brand"])  # Default to Brand
+        persona = PERSONAS.get(persona_key, PERSONAS["brand"])
         
         return f"""
 --- IDENTITY PROTOCOL: {persona['role']} ---
 Tone: {persona['tone']}
 Goal: {persona['goals']}
-Style: {persona['style_guide']}
+Constraint: {persona['drift_guard']}
 
 {X_ALGO_RULES}
 
---- INPUT CONTEXT ---
+--- INPUT CONTEXT (Analyze this deeply) ---
 "{user_input}"
 
 --- MISSION ---
 Generate 3 HIGH-RANKING tweet options acting strictly as {persona['role']}.
-Each option must target a specific X Algorithm metric.
+CRITICAL: You must stick to the subject matter of the INPUT CONTEXT. Do not hallucinate unrelated technologies or topics.
 
---- STRATEGY MODES (Select 3 distinct ones) ---
-1. MODE_TECHNICAL_DEEP_DIVE (Target: DWELL_TIME) -> Best for Dev
-2. MODE_CONTROVERSIAL_TAKE (Target: REPLY_WEIGHT) -> Best for Brand
-3. MODE_VISUAL_ALPHA (Target: PHOTO_EXPAND_WEIGHT) -> Best for Charts/Screenshots
-4. MODE_ECOSYSTEM_BAIT (Target: PROFILE_CLICK_WEIGHT) -> Best for Teasers
+--- STRATEGY MODES (Choose 3 distinct ones) ---
+1. MODE_TECHNICAL_DEEP_DIVE (Target: DWELL_TIME) -> Best for detailed analysis.
+2. MODE_CONTROVERSIAL_TAKE (Target: REPLY_WEIGHT) -> Best for sparking debate.
+3. MODE_VISUAL_ALPHA (Target: PHOTO_EXPAND_WEIGHT) -> Best for charts/evidence.
+4. MODE_ECOSYSTEM_BAIT (Target: PROFILE_CLICK_WEIGHT) -> Best for funneling traffic.
 
---- OUTPUT FORMAT (STRICT JSON) ---
-Output ONLY a valid JSON object. No markdown.
+--- OUTPUT FORMAT (JSON ONLY) ---
+Output purely valid JSON. No markdown formatting.
 {{
-  "analysis_summary": "Why this fits the {persona['role']} persona.",
+  "analysis_summary": "Brief analysis of the input and why these strategies fit.",
   "options": [
     {{
       "strategy_mode": "MODE_NAME",
@@ -88,149 +87,101 @@ Output ONLY a valid JSON object. No markdown.
 
 class ModelManager:
     """
-    Manages dynamic discovery, fallback logic, and 'Sticky' model selection.
-    CRITICAL: Logic is preserved to ensure continuity of service across model limits.
+    Handles model selection, rotation, and reliability.
     """
     _cached_models = []
     _current_index = 0
 
-    @staticmethod
-    def _extract_version(model_name: str) -> float:
-        match = re.search(r'(\d+(?:\.\d+)?)', model_name)
-        if match:
-            return float(match.group(1))
-        return 0.0
-
     @classmethod
-    def get_prioritized_models(cls):
-        if cls._cached_models:
-            return cls._cached_models
+    def get_rotated_list(cls):
+        """Discovers models and rotates them to ensure high availability."""
+        if not cls._cached_models:
+            try:
+                logger.info("📡 Discovering Gemini models...")
+                genai.configure(api_key=Config.GEMINI_API_KEY)
+                all_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods and 'gemini' in m.name]
+                # Sort by version (newest first)
+                all_models.sort(key=lambda x: x, reverse=True) 
+                cls._cached_models = all_models if all_models else ["models/gemini-1.5-pro"]
+                logger.info(f"✅ Active Models: {cls._cached_models}")
+            except Exception as e:
+                logger.error(f"❌ Model discovery failed: {e}")
+                return ["models/gemini-1.5-flash"]
 
-        try:
-            logger.info("📡 Discovering available Gemini models...")
-            genai.configure(api_key=Config.GEMINI_API_KEY)
-            
-            all_models = list(genai.list_models())
-            valid_models = []
-
-            for m in all_models:
-                if 'generateContent' in m.supported_generation_methods and 'gemini' in m.name:
-                    valid_models.append(m.name)
-            
-            # Sort: Version Descending -> Pro over Flash
-            valid_models.sort(key=lambda x: (cls._extract_version(x), 'pro' in x), reverse=True)
-            
-            if not valid_models:
-                logger.warning("⚠️ No models found dynamically. Using fallback.")
-                valid_models = ["models/gemini-1.5-pro", "models/gemini-1.5-flash"]
-
-            logger.info(f"✅ Model Priority List: {valid_models}")
-            cls._cached_models = valid_models
-            return valid_models
-
-        except Exception as e:
-            logger.error(f"❌ Model discovery failed: {e}")
-            return ["models/gemini-1.5-flash"]
+        # Rotate logic
+        if cls._current_index >= len(cls._cached_models):
+            cls._current_index = 0
+        return cls._cached_models[cls._current_index:] + cls._cached_models[:cls._current_index]
 
     @classmethod
     def update_champion(cls, model_name):
         if model_name in cls._cached_models:
             cls._current_index = cls._cached_models.index(model_name)
 
-    @classmethod
-    def get_rotated_list(cls):
-        models = cls.get_prioritized_models()
-        if not models:
-            return []
-        if cls._current_index >= len(models):
-            cls._current_index = 0
-        return models[cls._current_index:] + models[:cls._current_index]
-
 def analyze_and_draft(user_input: str) -> str:
     """
-    Orchestrates the AI interaction with Persona Routing.
+    Main pipeline: Routing -> Fetching -> Sanitizing -> Generating.
     """
-    # 1. PARSE PERSONA TAG (ROUTING LAYER)
-    persona_key = "brand" # Default
+    # 1. ROUTING LAYER (Detect Persona)
+    persona_key = "brand" 
     clean_input = user_input
-
-    # Regex to find @pepetopia_dev or @pepetopia at the end
+    
     match = re.search(r'(@pepetopia_dev|@pepetopia)\s*$', user_input, re.IGNORECASE)
     if match:
         tag = match.group(1).lower()
-        if "dev" in tag:
-            persona_key = "dev"
-        else:
-            persona_key = "brand"
-        
-        # Remove the tag from the input so AI doesn't repeat it
+        persona_key = "dev" if "dev" in tag else "brand"
         clean_input = user_input[:match.start()].strip()
 
-    # 2. SECURITY: Input Sanitization
-    sanitized_input = re.sub(r'[^\w\s@#.,!?\-\'\"]', '', clean_input[:1500])
-    
-    # 3. GENERATE PROMPT
+    # 2. ENRICHMENT LAYER (Fetch URL Content)
+    # This solves the "link understanding" issue
+    enriched_input = extract_url_content(clean_input)
+
+    # 3. SANITIZATION (Security)
+    # Allow more characters for URL content, but strip dangerous patterns
+    sanitized_input = enriched_input[:2000] 
+
+    # 4. GENERATION LAYER
     candidate_models = ModelManager.get_rotated_list()
     final_prompt = StrategyEngine.construct_adaptive_prompt(sanitized_input, persona_key)
 
-    # 4. EXECUTE AI CHAIN
     for model_name in candidate_models:
         try:
             model = genai.GenerativeModel(
                 model_name, 
-                system_instruction="You are a JSON-only generator. Output raw JSON without Markdown."
+                system_instruction="You are a strict JSON generator. Do not output markdown code blocks."
             )
             
             response = model.generate_content(final_prompt)
             raw_text = response.text.strip()
             
-            # Cleaner
+            # Clean Markdown wrappers if present
             if raw_text.startswith("```"):
                 raw_text = re.sub(r"^```json|^```|```$", "", raw_text, flags=re.MULTILINE).strip()
 
-            try:
-                data = json.loads(raw_text)
-            except json.JSONDecodeError:
-                logger.error(f"❌ JSON Error on {model_name}. Raw: {raw_text[:50]}...")
-                raise exceptions.GoogleAPICallError("Malformed JSON")
-
-            # Success
+            data = json.loads(raw_text)
+            
             ModelManager.update_champion(model_name)
             return format_telegram_response(data, model_name, persona_key)
 
-        except exceptions.ResourceExhausted:
-            logger.warning(f"⚠️ Quota Exceeded for {model_name}. Switching...")
-            continue   
-        except Exception as e:
-            logger.error(f"❌ Error with {model_name}: {e}. Switching...")
+        except (exceptions.GoogleAPICallError, json.JSONDecodeError, Exception) as e:
+            logger.error(f"❌ Failure on {model_name}: {e}")
             continue
 
-    return "🚫 CRITICAL ERROR: All AI models failed."
+    return "🚫 CRITICAL ERROR: All AI models failed. Check logs."
 
 def format_telegram_response(data: dict, model_name: str, persona_key: str) -> str:
-    """
-    Formats the output with visual cues for the active persona.
-    """
-    analysis = data.get("analysis_summary", "No analysis.")
+    analysis = data.get("analysis_summary", "N/A")
     options = data.get("options", [])
     
-    # Header Icon based on Persona
-    header_icon = "👨‍💻" if persona_key == "dev" else "👑"
-    role_title = "BUILDER MODE" if persona_key == "dev" else "VISIONARY MODE"
-
-    output = f"{header_icon} **{role_title} ACTIVE**\n"
-    output += f"🧠 _Analysis: {analysis}_\n\n"
+    header = "👨‍💻 **ARCHITECT MODE**" if persona_key == "dev" else "👑 **VISIONARY MODE**"
+    
+    output = f"{header}\n🧠 _{analysis}_\n\n"
     
     for i, opt in enumerate(options, 1):
-        mode = opt.get('strategy_mode', 'Unknown')
-        score = opt.get('score_prediction', 0)
-        visual = opt.get('visual_cue', '-')
-        content = opt.get('tweet_content', '')
-        
         output += (
-            f"🔹 **Option {i}: {mode}** (Score: {score})\n"
-            f"🖼️ *Visual:* {visual}\n"
-            f"📋 `COPY:`\n{content}\n\n"
+            f"🔹 **Option {i}: {opt.get('strategy_mode')}** (Score: {opt.get('score_prediction')})\n"
+            f"🖼️ *Visual:* {opt.get('visual_cue')}\n"
+            f"📋 `COPY:`\n{opt.get('tweet_content')}\n\n"
         )
         
     output += f"⚙️ *Engine: {model_name.replace('models/', '')}*"
