@@ -13,9 +13,8 @@ class GeminiService:
     
     Strategy: "Smart Cascade"
     1. Discovery: Finds all available models via API.
-    2. Sorting: Prioritizes versions (e.g., 2.0 > 1.5) and Capability (Pro > Flash).
-    3. Resilience: If Model A hits a Rate Limit (429), it IMMEDIATELY retries with Model B 
-       using the exact same prompt.
+    2. Sorting: Prioritizes versions (e.g., 3.0 > 2.0 > 1.5) and Capability (Pro > Flash).
+    3. Resilience: If Model A hits a Rate Limit (429), it IMMEDIATELY retries with Model B.
     """
 
     _available_models = []
@@ -40,7 +39,7 @@ class GeminiService:
     def initialize(cls):
         """
         Initializes the Gemini client and constructs the optimal model chain.
-        Ensures we have a robust list ranging from 'Experimental' to 'Stable'.
+        Ensures we have a robust list ranging from 'Bleeding Edge' to 'Safety Net'.
         """
         if not Config.GEMINI_API_KEY:
             logger.error("Gemini API Key is missing!")
@@ -58,7 +57,6 @@ class GeminiService:
             filtered_models = [m for m in all_raw_models if "gemma" not in m and "nano" not in m and "embedding" not in m]
 
             # 2. SCORING ALGORITHM
-            # We give points to models to sort them: High Version > Pro > Flash
             def model_scorer(model_name):
                 name = model_name.lower()
                 score = 0.0
@@ -70,7 +68,6 @@ class GeminiService:
                     score += version * 1000  # Base Score (Version is king)
 
                 # Tier Adjustments
-                # Pro/Exp usually hits limits faster, but is smarter. We try them first.
                 if "pro" in name: score += 50
                 if "flash" in name: score += 20
                 
@@ -88,31 +85,25 @@ class GeminiService:
             sorted_models = sorted(filtered_models, key=model_scorer, reverse=True)
             
             # 3. SAFETY NET CONSTRUCTION
-            # We must ensure 'gemini-1.5-flash' (The tank) is the absolute LAST resort.
-            # It has the highest free tier limits.
-            
+            # Ensure 'gemini-1.5-flash' is the LAST resort due to high limits.
             final_chain = []
             safety_net_models = []
             
             for m in sorted_models:
-                # If it's a 1.5 Flash model, save it for the end
                 if "gemini-1.5-flash" in m and "8b" not in m:
                     safety_net_models.append(m)
                 else:
                     final_chain.append(m)
             
-            # Sort safety net to put "latest" or "002" versions of flash first
-            safety_net_models.sort(key=lambda x: "latest" in x or "002" in x, reverse=True)
+            # Sort safety net to put "latest" first
+            safety_net_models.sort(key=lambda x: "latest" in x, reverse=True)
             
-            # Append safety net at the end
             final_chain.extend(safety_net_models)
 
-            # Fallback if list is empty
             if not final_chain:
                 final_chain = ["models/gemini-2.0-flash-exp", "models/gemini-1.5-pro", "models/gemini-1.5-flash"]
 
             cls._available_models = final_chain
-            
             logger.info(f"🧬 AI DNA (Optimized Chain): {cls._available_models}")
 
         except Exception as e:
@@ -123,8 +114,7 @@ class GeminiService:
     async def _generate_with_retry(cls, prompt: str, temperature: float = 0.8) -> str:
         """
         THE SURVIVAL LOOP:
-        Iterates through the model chain. If a model fails (Quota/Error), 
-        it seamlessly passes the SAME prompt to the next model.
+        Iterates through the model chain. On 429 (Quota) error, retries immediately with next model.
         """
         if not cls._available_models:
             cls.initialize()
@@ -133,8 +123,7 @@ class GeminiService:
 
         for i, model_name in enumerate(cls._available_models):
             try:
-                # Configuration
-                # Only enable search tool for high-tier models to avoid config errors on simpler ones
+                # Tools config (Only for capable models)
                 tools = []
                 if "pro" in model_name or "gemini-2" in model_name:
                     tools = [{"google_search_retrieval": {}}]
@@ -147,9 +136,7 @@ class GeminiService:
                 
                 config = genai.types.GenerationConfig(temperature=temperature)
                 
-                # logger.info(f"🤖 Thinking with {model_name}...")
-                
-                # Execute (Async execution in thread pool to prevent blocking)
+                # Async execution
                 response = await asyncio.to_thread(
                     model.generate_content, 
                     prompt, 
@@ -160,13 +147,12 @@ class GeminiService:
                     return response.text
 
             except (ResourceExhausted, InternalServerError, ServiceUnavailable) as e:
-                # 429 = QUOTA EXCEEDED. This is what we want to catch.
-                logger.warning(f"⚠️ Quota Hit/Server Error on {model_name}. Switching to next model... ({e})")
+                logger.warning(f"⚠️ Quota Hit/Server Error on {model_name}. Switching... ({e})")
                 last_error = e
-                continue # Try next model in loop
+                continue 
             
             except InvalidArgument as e:
-                logger.warning(f"⚠️ Config Mismatch on {model_name}: {e}. Skipping...")
+                logger.warning(f"⚠️ Config Mismatch on {model_name}. Skipping...")
                 last_error = e
                 continue
 
@@ -175,7 +161,6 @@ class GeminiService:
                 last_error = e
                 continue
 
-        # If we reach here, ALL models failed.
         logger.critical(f"💀 All AI models failed. Last Error: {last_error}")
         return "🐸 My brain is buffering... (Global neural outage, please try again in 5 mins.)"
 
@@ -196,7 +181,7 @@ class GeminiService:
 
     @classmethod
     async def generate_daily_digest(cls, news_list):
-        """Daily/Instant Digest wrapper."""
+        """Daily Digest (English Only)."""
         news_text = "\n".join([f"- {item['title']} (Source: {item['source']})" for item in news_list])
         prompt = (
             f"Role: You are TOPI, the AI crypto market analyst.\n"
@@ -206,5 +191,25 @@ class GeminiService:
             "2. TONE: Witty, energetic, use emojis.\n"
             "3. FORMAT: Bullet points with bold headers. Keep it concise."
         )
-        # Use a lower temperature for digests to be more factual
         return await cls._generate_with_retry(prompt, temperature=0.7)
+
+    @classmethod
+    async def generate_flash_update(cls, news_item):
+        """
+        NEW: Generates a short, bilingual (TR/ES) update for a single news item.
+        Used for micro-updates throughout the day.
+        """
+        prompt = (
+            f"Breaking News: '{news_item['title']}' (Source: {news_item['source']})\n\n"
+            "Task: Create a 'Flash Info' update for the Pepetopia community.\n"
+            "--- RULES ---\n"
+            "1. TRANSLATE & SUMMARIZE the core news into TWO languages:\n"
+            "   - First: Turkish (🇹🇷)\n"
+            "   - Second: Spanish (🇪🇸)\n"
+            "2. TONE: Hype, energetic, fast. Use emojis (🔥, 🚀, 🐸).\n"
+            "3. FORMAT:\n"
+            "   🇹🇷 [Turkish Summary]\n"
+            "   🇪🇸 [Spanish Summary]\n"
+            "4. CONSTRAINT: Keep it under 280 characters total. No English output."
+        )
+        return await cls._generate_with_retry(prompt, temperature=0.8)
