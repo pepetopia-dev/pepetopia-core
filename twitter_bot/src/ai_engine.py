@@ -11,29 +11,24 @@ logger = logging.getLogger(__name__)
 # --- 1. X ALGORITHM RULES ---
 X_ALGO_RULES = """
 --- X ALGORITHM OPTIMIZATION RULES ---
-Your output MUST maximize these internal scoring variables:
-1. REPLY_WEIGHT: Provoke debates or ask high-signal questions.
-2. PROFILE_CLICK_WEIGHT: Create "Curiosity Gaps".
-3. PHOTO_EXPAND_WEIGHT: Reference visual data.
-4. DWELL_TIME: Use high-value, dense information.
-5. VQV_WEIGHT: Mention video/animation context if applicable.
+1. REPLY_WEIGHT: High signal questions.
+2. PROFILE_CLICK_WEIGHT: Curiosity gaps.
+3. PHOTO_EXPAND_WEIGHT: Refer to visuals.
+4. DWELL_TIME: High-density info.
+5. VQV_WEIGHT: Video context.
 """
 
 # --- 2. PERSONA DEFINITIONS ---
 PERSONAS = {
     "dev": {
         "role": "THE ARCHITECT (@pepetopia_dev)",
-        "tone": "Solution-Oriented, Transparent, 'Builder-to-Builder', Analytical.",
-        "goals": "Build trust through technical competence. NO SHILLING.",
-        "style_guide": "Focus on architecture, logic, and solutions. Avoid specific syntax unless asked.",
-        "drift_guard": "STAY ON TOPIC. Do not pivot to random tech stacks."
+        "tone": "Technical, Builder-to-Builder, Analytical.",
+        "drift_guard": "STAY ON TOPIC. No random language pivots."
     },
     "brand": {
         "role": "THE VISIONARY (@pepetopia)",
-        "tone": "High-Status, Intellectual, 'The Insider', Commanding.",
-        "goals": "Dominate the narrative. Frame Pepetopia as the inevitable future.",
-        "style_guide": "Focus on 'Why' and 'Macro Impact'. Talk about Freedom and Dominance.",
-        "drift_guard": "STAY ON TOPIC. Connect the input to the ecosystem vision."
+        "tone": "High-Status, Intellectual, Commanding.",
+        "drift_guard": "STAY ON TOPIC. Connect to ecosystem vision."
     }
 }
 
@@ -42,31 +37,27 @@ class StrategyEngine:
     def construct_adaptive_prompt(user_input: str, persona_key: str) -> str:
         persona = PERSONAS.get(persona_key, PERSONAS["brand"])
         return f"""
---- IDENTITY PROTOCOL: {persona['role']} ---
-Tone: {persona['tone']}
-Goal: {persona['goals']}
-Constraint: {persona['drift_guard']}
+--- IDENTITY: {persona['role']} ---
+Tone: {persona['tone']} | Constraint: {persona['drift_guard']}
 
 {X_ALGO_RULES}
 
---- INPUT CONTEXT ---
+--- INPUT ---
 "{user_input}"
 
 --- MISSION ---
-Generate 3 HIGH-RANKING tweet options acting strictly as {persona['role']}.
-CRITICAL: Stick to the subject matter of the INPUT CONTEXT.
+Generate 3 tweet options strictly following the input topic.
+Output raw JSON only.
 
---- OUTPUT FORMAT (JSON ONLY) ---
-Output purely valid JSON. No markdown.
 {{
-  "analysis_summary": "Brief analysis.",
+  "analysis_summary": "...",
   "options": [
     {{
-      "strategy_mode": "MODE_NAME",
-      "target_metric": "ALGO_VARIABLE",
+      "strategy_mode": "...",
+      "target_metric": "...",
       "score_prediction": 95,
-      "visual_cue": "Description.",
-      "tweet_content": "Content here. End with #{'PepetopiaDev' if persona_key == 'dev' else 'Pepetopia'}."
+      "visual_cue": "...",
+      "tweet_content": "..."
     }}
   ]
 }}
@@ -74,8 +65,7 @@ Output purely valid JSON. No markdown.
 
 class ModelManager:
     """
-    Manages DYNAMIC discovery and fallback logic.
-    Restored to fetch live models from Google and sort by power.
+    Handles dynamic discovery with STABILITY filtering.
     """
     _client = None
     _cached_models = []
@@ -88,76 +78,54 @@ class ModelManager:
         return cls._client
 
     @staticmethod
-    def _model_sort_key(model_name: str):
-        """
-        Sorting Logic:
-        1. Version Number (Higher is better, e.g., 2.0 > 1.5)
-        2. Tier (Pro > Flash > Nano)
-        """
-        # Extract version (default to 0 if not found)
-        version_match = re.search(r'(\d+(?:\.\d+)?)', model_name)
-        version = float(version_match.group(1)) if version_match else 0.0
+    def _model_ranking(model_name: str):
+        # Prefer stable 2.0 and 1.5 models over experimental ones
+        version = float(re.search(r'(\d+(?:\.\d+)?)', model_name).group(1)) if re.search(r'(\d+(?:\.\d+)?)', model_name) else 0.0
         
-        # Tier priority
-        tier_score = 0
-        if 'pro' in model_name: tier_score = 3
-        elif 'flash' in model_name: tier_score = 2
-        elif 'nano' in model_name: tier_score = 1
+        score = version * 10
+        if "pro" in model_name: score += 2
+        if "flash" in model_name: score += 1
+        if "exp" in model_name or "preview" in model_name: score -= 5 # Deprioritize experimental
         
-        return (version, tier_score)
+        return score
 
     @classmethod
     def get_rotated_list(cls):
-        """
-        Fetches LIVE models from API, filters for Gemini, sorts by power,
-        and rotates based on the last working model (Sticky Session).
-        """
         if not cls._cached_models:
             try:
                 client = cls.get_client()
-                logger.info("📡 Dynamically discovering Gemini models...")
+                logger.info("📡 Discovering stable models...")
                 
-                # Fetch all models
-                # In new SDK, we iterate over the paginated list
-                found_models = []
-                for m in client.models.list():
-                    # Filter for 'gemini' and ensure it's a generation model
-                    # Note: New SDK model objects might differ, checking name is safest
-                    if 'gemini' in m.name.lower() and 'vision' not in m.name.lower():
-                        # Clean the name (remove 'models/' prefix if present for clean ID)
-                        clean_name = m.name.replace('models/', '')
-                        found_models.append(clean_name)
-
-                if not found_models:
-                    logger.warning("⚠️ No models found via API. Using emergency fallback.")
-                    found_models = ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"]
+                all_api_models = [m.name.replace('models/', '') for m in client.models.list()]
                 
-                # Sort descending (Best first)
-                found_models.sort(key=cls._model_sort_key, reverse=True)
+                # Filter for usable Gemini models only
+                usable = [m for m in all_api_models if 'gemini' in m and 'embedding' not in m and 'aqa' not in m]
                 
-                # Deduplicate just in case
-                cls._cached_models = list(dict.fromkeys(found_models))
-                logger.info(f"✅ Dynamic Model Chain: {cls._cached_models}")
+                # Rank by version and stability
+                usable.sort(key=cls._model_ranking, reverse=True)
                 
+                cls._cached_models = usable
+                logger.info(f"✅ Filtered Model Chain: {cls._cached_models}")
             except Exception as e:
-                logger.error(f"❌ Dynamic discovery failed: {e}")
-                # Emergency hardcoded list if API discovery fails completely
-                return ["gemini-1.5-flash"]
+                logger.error(f"❌ Discovery failed: {e}")
+                return ["gemini-2.0-flash", "gemini-1.5-flash"]
 
-        # Rotate list: [Current, Next, ..., Previous]
-        if cls._current_index >= len(cls._cached_models):
-            cls._current_index = 0
-            
         return cls._cached_models[cls._current_index:] + cls._cached_models[:cls._current_index]
 
     @classmethod
     def update_champion(cls, model_name):
-        """Locks onto the successful model to prevent unnecessary switching."""
         if model_name in cls._cached_models:
             cls._current_index = cls._cached_models.index(model_name)
 
+def escape_markdown(text: str) -> str:
+    """
+    Escapes reserved MarkdownV2 characters to prevent Telegram parse errors.
+    """
+    # Specifically target characters that break style tags and headers
+    reserved_chars = r'_*[]()~`>#+-=|{}.!'
+    return re.sub(r'([%s])' % re.escape(reserved_chars), r'\\\1', text)
+
 def analyze_and_draft(user_input: str) -> str:
-    # 1. ROUTING
     persona_key = "brand"
     clean_input = user_input
     match = re.search(r'(@pepetopia_dev|@pepetopia)\s*$', user_input, re.IGNORECASE)
@@ -166,55 +134,44 @@ def analyze_and_draft(user_input: str) -> str:
         persona_key = "dev" if "dev" in tag else "brand"
         clean_input = user_input[:match.start()].strip()
 
-    # 2. ENRICHMENT & SANITIZATION
     enriched_input = extract_url_content(clean_input)
-    sanitized_input = enriched_input[:2000]
-
-    # 3. GENERATION
     candidate_models = ModelManager.get_rotated_list()
-    final_prompt = StrategyEngine.construct_adaptive_prompt(sanitized_input, persona_key)
-    
-    try:
-        client = ModelManager.get_client()
-    except Exception:
-        return "🚫 CRITICAL ERROR: Client Init Failed."
+    final_prompt = StrategyEngine.construct_adaptive_prompt(enriched_input[:2000], persona_key)
+    client = ModelManager.get_client()
 
     for model_name in candidate_models:
         try:
-            # logger.info(f"🧠 Trying Engine: {model_name}")
-            
             response = client.models.generate_content(
                 model=model_name,
                 contents=final_prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json"
-                )
+                config=types.GenerateContentConfig(response_mime_type="application/json")
             )
-            
-            raw_text = response.text.strip()
-            data = json.loads(raw_text)
-            
-            # SUCCESS: Update sticky session
+            data = json.loads(response.text.strip())
             ModelManager.update_champion(model_name)
             return format_telegram_response(data, model_name, persona_key)
 
         except Exception as e:
-            logger.warning(f"⚠️ Failure on {model_name}: {e}. Switching to next...")
+            logger.warning(f"⚠️ {model_name} failed: {e}. Switching...")
             continue
 
-    return "🚫 CRITICAL ERROR: All available models failed."
+    return "🚫 All models exhausted."
 
 def format_telegram_response(data: dict, model_name: str, persona_key: str) -> str:
+    # Use HTML or Markdown escaping to prevent 400 Bad Request
+    header = "👨‍💻 ARCHITECT MODE" if persona_key == "dev" else "👑 VISIONARY MODE"
     analysis = data.get("analysis_summary", "N/A")
-    options = data.get("options", [])
-    header = "👨‍💻 **ARCHITECT MODE**" if persona_key == "dev" else "👑 **VISIONARY MODE**"
     
-    output = f"{header}\n🧠 _{analysis}_\n\n"
-    for i, opt in enumerate(options, 1):
-        output += (
-            f"🔹 **Option {i}: {opt.get('strategy_mode')}** (Score: {opt.get('score_prediction')})\n"
-            f"🖼️ *Visual:* {opt.get('visual_cue')}\n"
-            f"📋 `COPY:`\n{opt.get('tweet_content')}\n\n"
-        )
-    output += f"⚙️ *Engine: {model_name}*"
-    return output
+    # Building response as a list of lines for cleaner handling
+    res = [f"*{header}*", f"_{analysis}_", ""]
+    
+    for i, opt in enumerate(data.get("options", []), 1):
+        content = opt.get('tweet_content', '')
+        res.append(f"🔹 *Option {i}: {opt.get('strategy_mode')}*")
+        res.append(f"🖼️ Visual: {opt.get('visual_cue')}")
+        res.append(f"📋 ` {content} `\n")
+    
+    res.append(f"⚙️ Engine: {model_name}")
+    
+    # Final join and escape check
+    final_text = "\n".join(res)
+    return final_text
