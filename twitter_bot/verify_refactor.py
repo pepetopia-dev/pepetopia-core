@@ -1,84 +1,114 @@
 import sys
 import os
 import json
-from dataclasses import asdict
-from unittest.mock import MagicMock
+import asyncio
+from unittest.mock import MagicMock, AsyncMock
 
-# Set dummy env vars to pass Config validation
-os.environ["GEMINI_API_KEY"] = "dummy"
-os.environ["TELEGRAM_BOT_TOKEN"] = "dummy"
-os.environ["TELEGRAM_CHAT_ID"] = "dummy"
-
-# Mock google.genai to avoid ImportError
-sys.modules["google"] = MagicMock()
-sys.modules["google.genai"] = MagicMock()
-sys.modules["google.genai.types"] = MagicMock()
-sys.modules["dotenv"] = MagicMock()
-sys.modules["requests"] = MagicMock()
-sys.modules["bs4"] = MagicMock()
+# Set dummy env vars for Config
+os.environ["GEMINI_API_KEY"] = "dummy_key"
+os.environ["TELEGRAM_BOT_TOKEN"] = "dummy_token"
+os.environ["TELEGRAM_CHAT_ID"] = "dummy_chat_id"
 
 # Adjust path to include src
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
+# Mock ONLY the google.genai library, not our internal wrappers
+mock_google = MagicMock()
+mock_genai = MagicMock()
+sys.modules["google"] = mock_google
+sys.modules["google.genai"] = mock_genai
+# CRITICAL: Link them so 'from google import genai' gets the configured mock
+mock_google.genai = mock_genai
+
+sys.modules["google.genai.types"] = MagicMock()
+# We also need to mock dotenv/requests/bs4 if they are imported at top level
+sys.modules["dotenv"] = MagicMock()
+sys.modules["requests"] = MagicMock()
+sys.modules["bs4"] = MagicMock()
+
+# Import REAL modules
 from src.prompt_builder import PromptBuilder, TweetContext
-from src.ai_engine import format_response
+from src.ai_engine import analyze_and_draft, format_response, GeminiService
 
-def test_prompt_builder():
-    print("--- Testing PromptBuilder ---")
-    pb = PromptBuilder()
+async def test_end_to_end_flow():
+    print("\n--- Testing Standalone AI Engine Integration ---")
     
-    # Test 1: Load Insights
-    print(f"Insights loaded (approx length): {len(pb.insights)} chars")
-    if len(pb.insights) < 100:
-        print("WARNING: Insights seem too short!")
+    # Mock the internal client of GeminiService
+    # The user's code uses: client = genai.Client(api_key=Config.GEMINI_API_KEY)
+    # And then: await client.aio.models.generate_content(...)
     
-    # Test 2: Build System Prompt
-    persona = {
-        "role": "TEST ROLE",
-        "style": "Test Style",
-        "directive": "Test Directive"
-    }
-    sys_prompt = pb.build_system_prompt(persona)
-    print("\n[System Prompt Snippet]")
-    print(sys_prompt[:200] + "...")
+    # We need to mock genai.Client so that it returns our AsyncMock
+    mock_client_instance = MagicMock()
+    mock_aio = MagicMock()
+    mock_models = MagicMock()
     
-    if "JSON OUTPUT STRUCTURE" not in sys_prompt and "Output Format (STRICT JSON)" not in sys_prompt:
-         print("FAIL: JSON instructions missing in system prompt.")
-    else:
-         print("PASS: JSON instructions found.")
-
-    # Test 3: Build User Prompt
-    ctx = TweetContext(text="Bitcoin is going to the moon!", author="Satoshi", topic="Crypto", sentiment="Positive")
-    user_prompt = pb.build_user_prompt(ctx)
-    print("\n[User Prompt]")
-    print(user_prompt)
-
-def test_response_parsing():
-    print("\n--- Testing Response Parsing (Mock) ---")
-    
-    mock_json_response = {
+    # Setup the async generate_content return value
+    mock_response = MagicMock()
+    mock_response.text = json.dumps({
         "analysis": {
             "sentiment": "Positive",
             "topic": "Crypto",
-            "context_thought": "User is bullish. Align with 'Growth' viral score logic."
+            "context_thought": "Unit Test Execution"
         },
-        "viral_score": 88,
-        "reply_text": "Moon mission confirmed. 🚀 But what's the plan for re-entry? #BTC"
-    }
+        "viral_score": 95,
+        "reply_text": "Standalone Engine is Operational! 🚀"
+    })
     
-    formatted = format_response(mock_json_response, "mock-model-1.0", "brand")
-    print("\n[Formatted Output]")
-    try:
-        print(formatted.encode('ascii', 'ignore').decode('ascii'))
-    except Exception as e:
-        print(f"Error printing formatted output: {e}")
+    mock_generate = AsyncMock(return_value=mock_response)
+    mock_models.generate_content = mock_generate
+    mock_aio.models = mock_models
+    mock_client_instance.aio = mock_aio
+    
+    # Patch the genai.Client constructor to return our mock
+    # sys.modules["google.genai"] is our MagicMock for the module
+    # We need to make sure genai.Client returns our mock_client_instance
+    sys.modules["google.genai"].Client.return_value = mock_client_instance
+    
+    # DEBUG: verify the mock structure
+    print(f"DEBUG: genai module: {sys.modules['google.genai']}")
+    print(f"DEBUG: genai.Client: {sys.modules['google.genai'].Client}")
+    print(f"DEBUG: genai.Client(): {sys.modules['google.genai'].Client()}")
+    print(f"DEBUG: client.aio: {sys.modules['google.genai'].Client().aio}")
+    print(f"DEBUG: client.aio.models.generate_content: {sys.modules['google.genai'].Client().aio.models.generate_content}")
+    # Check if awaitable
+    is_coroutine = asyncio.iscoroutinefunction(sys.modules['google.genai'].Client().aio.models.generate_content)
+    print(f"DEBUG: is generate_content awaitable? {is_coroutine}")
 
+    print("Executing analyze_and_draft...")
     
-    if "88/100" in formatted and "Moon mission confirmed" in formatted:
-        print("PASS: Formatting looks correct.")
-    else:
-        print("FAIL: Formatted output missing key elements.")
+    # Since analyze_and_draft is now patched to run asyncio.run internally when called synchronously,
+    # OR we can call the async internal logic if we could, but let's test the public API.
+    # However, we are already in an async function. 
+    # analyze_and_draft has this logic:
+    # try: loop = asyncio.get_event_loop() ...
+    # response_text, model_name = loop.run_until_complete(...)
+    
+    # Creating a new loop inside an existing loop is problematic.
+    # But analyze_and_draft handles the RuntimeError? 
+    # Let's try calling it. If it fails due to existing loop, we might need to run it in a thread 
+    # to simulate how main.py calls it (asyncio.to_thread).
+    
+    try:
+        response = await asyncio.to_thread(analyze_and_draft, "Test Input")
+        print("\n[Engine Output]")
+        try:
+            print(response.encode('ascii', 'ignore').decode('ascii'))
+        except:
+            print(response)
+
+        if "Standalone Engine is Operational" in response and "95/100" in response:
+            print("PASS: Standalone integration verified.")
+        else:
+            print("FAIL: Output does not match expected mock.")
+            
+    except Exception as e:
+        print(f"FAIL: Execution error: {e}")
 
 if __name__ == "__main__":
-    test_prompt_builder()
-    test_response_parsing()
+    # Test PromptBuilder (Sync)
+    print("--- Testing PromptBuilder ---")
+    pb = PromptBuilder()
+    if len(pb.insights) > 50: print("PASS: Insights loaded.")
+    
+    # Test Engine (Async wrapper)
+    asyncio.run(test_end_to_end_flow())

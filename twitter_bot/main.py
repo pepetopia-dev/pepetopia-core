@@ -1,10 +1,13 @@
 import logging
+import sys
+import asyncio
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
+from telegram.error import Conflict
 from src.app_config import Config
 from src.ai_engine import analyze_and_draft
 
-# Configure Logging
+# Logging Ayarları
 logging.basicConfig(
     format='%(asctime)s - [%(levelname)s] - %(name)s - %(message)s',
     level=logging.INFO
@@ -12,51 +15,40 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Initial handshake. Checks security clearance.
-    """
     user_id = str(update.effective_chat.id)
-    
     if user_id != Config.TELEGRAM_CHAT_ID:
         logger.warning(f"⛔ Unauthorized access attempt: {user_id}")
         return
 
     await context.bot.send_message(
         chat_id=update.effective_chat.id, 
-        text=(
-            "👋 **Pepetopia Strategic Core Online**\n\n"
-            "I am initialized with the new **Link-Aware** and **Topic-Grounded** engine.\n"
-            "Send me a tweet text or a direct link to analyze."
-        ),
+        text="👋 **Pepetopia Bot Online**\nSistemi yerel modda başlattım. Link veya metin gönderin.",
         parse_mode='Markdown'
     )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Main message handler.
-    """
     user_id = str(update.effective_chat.id)
-    
     if user_id != Config.TELEGRAM_CHAT_ID:
         return
 
     if not update.message or not update.message.text:
-        await context.bot.send_message(chat_id=user_id, text="⚠️ Please send text or a link.")
         return
 
     incoming_text = update.message.text
     
-    # Send feedback message
+    # Bilgi mesajı
     status_msg = await context.bot.send_message(
         chat_id=user_id, 
-        text="🧠 **Extracting Context & Analyzing...**"
+        text="🧠 **Analiz ediliyor...**"
     )
 
-    # Execute AI Logic
-    # (Note: Logic is encapsulated in ai_engine to keep main.py clean)
-    ai_response = analyze_and_draft(incoming_text)
+    # AI motorunu kilitlemeden (non-blocking) çalıştır
+    try:
+        ai_response = await asyncio.to_thread(analyze_and_draft, incoming_text)
+    except Exception as e:
+        ai_response = f"⚠️ Kritik Hata: {str(e)}"
 
-    # Update the status message with the result
+    # Sonucu yaz
     await context.bot.edit_message_text(
         chat_id=user_id,
         message_id=status_msg.message_id,
@@ -65,15 +57,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 def main():
-    logger.info("🚀 Starting Pepetopia Bot Service...")
+    logger.info("🚀 Starting Pepetopia Bot Service (Standalone Mode)...")
     
+    # Application oluştur
     application = ApplicationBuilder().token(Config.TELEGRAM_BOT_TOKEN).build()
     
     application.add_handler(CommandHandler('start', start))
-    # Handle text messages that are NOT commands
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     
-    application.run_polling()
+    try:
+        # drop_pending_updates=True: Bot kapalıyken biriken eski mesajları yoksayar,
+        # bu da başlangıçtaki "Conflict" riskini azaltır.
+        logger.info("Polling başlatılıyor...")
+        application.run_polling(drop_pending_updates=True)
+        
+    except Conflict:
+        logger.critical("🛑 HATA: Aynı token ile çalışan başka bir bot var!")
+        logger.critical("👉 Çözüm: Açık kalan diğer terminalleri kapatın veya sunucuyu (Heroku vb.) yeniden başlatın.")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"❌ Beklenmeyen Hata: {e}")
 
 if __name__ == '__main__':
     main()
