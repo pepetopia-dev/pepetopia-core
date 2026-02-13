@@ -1,19 +1,25 @@
+import sys
+import os
+import asyncio
+import logging
 from telegram import Update
 from telegram.ext import ContextTypes
-from src.services.gemini_service import GeminiService
-import logging
 
 logger = logging.getLogger(__name__)
+
+# --- DYNAMIC IMPORT FOR TWITTER ENGINE ---
+# This ensures we can import the refactored twitter_bot module
+# without conflict with the local telegram_bot src package.
+CORE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
+if CORE_ROOT not in sys.path:
+    sys.path.append(CORE_ROOT)
+
+from twitter_bot.src.ai_engine import analyze_and_draft
 
 async def ai_chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     [Handler: AI Chat]
-    Processes natural language messages.
-    
-    Triggers:
-    - Direct Private Message (DM)
-    - Mention in Group (@BotName)
-    - Reply to Bot's message
+    Processes natural language messages using the Twitter Algorithm Insights Refactored Engine.
     """
     # Safety Check: Ignore empty updates or non-text messages
     if not update.message or not update.message.text:
@@ -47,8 +53,17 @@ async def ai_chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         logger.info(f"AI Interaction triggered by User {update.effective_user.id} in {chat_type}")
 
-        # Generate Response
-        ai_response = await GeminiService.get_response(cleaned_text)
+        # Generate Response using the Refactored Twitter Engine
+        # We run it in a thread since it's synchronous IO (mostly)
+        try:
+            ai_response = await asyncio.to_thread(analyze_and_draft, cleaned_text)
+            
+            # The ai_response string ALREADY contains the formatted output with 
+            # Viral Score and Analysis logic as part of the string returned by ai_engine.format_response
+            
+        except Exception as e:
+            logger.error(f"Failed to generate response via Algorithm Engine: {e}")
+            ai_response = "⚠️ Engine Malfunction. Please try again later."
         
         # Send Reply
         await update.message.reply_text(ai_response, parse_mode='Markdown')

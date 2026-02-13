@@ -1,25 +1,26 @@
 import logging
 import re
 import json
-import time
+import asyncio
+import sys
+import os
 from typing import List, Dict, Optional
-from google import genai
-from google.genai import types
-from src.app_config import Config
-from src.utils import extract_url_content
+
+# Add path for centralized GeminiService
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
+try:
+    from telegram_bot.src.services.gemini_service import GeminiService
+except ImportError:
+    # Fallback/Mock for testing when not in full env
+    logging.warning("Failed to import GeminiService. Ensure telegram_bot is in path.")
+    GeminiService = None
+
+from .app_config import Config
+from .utils import extract_url_content
+from .prompt_builder import PromptBuilder, TweetContext
 
 # Configure module-level logger
 logger = logging.getLogger(__name__)
-
-# --- CONSTANTS & ALGORITHM WEIGHTS ---
-X_ALGO_WEIGHTS = """
-OBJECTIVE: MAXIMIZE TWEET SCORING BASED ON THESE X ALGORITHM WEIGHTS:
-1. REPLY_WEIGHT (High): Discussion starters, controversial takes, questions.
-2. RETWEET_WEIGHT (Medium): High-value utility, breaking news, relatable memes.
-3. DWELL_TIME_WEIGHT (High): Dense technical threads, long-form content, "read more" hooks.
-4. PHOTO_EXPAND_WEIGHT (Medium): Visual cues, referring to attached images/diagrams.
-5. PROFILE_CLICK_WEIGHT (Low): Curiosity gaps that lead to profile investigation.
-"""
 
 class PersonaManager:
     """
@@ -29,12 +30,12 @@ class PersonaManager:
         "dev": {
             "role": "SENIOR SOFTWARE ARCHITECT (@pepetopia_dev)",
             "style": "Technical, terse, authoritative, code-centric. Uses jargon correctly.",
-            "directive": "Focus on implementation details, performance metrics, and architectural implications. optimize for DWELL_TIME (Technical depth)."
+            "directive": "Focus on implementation details, performance metrics, and architectural implications."
         },
         "brand": {
             "role": "ECOSYSTEM VISIONARY (@pepetopia)",
             "style": "Inspiring, high-status, community-focused, forward-looking.",
-            "directive": "Focus on the big picture, market impact, and community growth. Optimize for RETWEET_WEIGHT and REPLY_WEIGHT (Virality)."
+            "directive": "Focus on the big picture, market impact, and community growth."
         }
     }
 
@@ -43,148 +44,6 @@ class PersonaManager:
         if "@pepetopia_dev" in input_text.lower():
             return "dev", PersonaManager.PERSONAS["dev"]
         return "brand", PersonaManager.PERSONAS["brand"]
-
-class ModelChain:
-    """
-    Implements DYNAMIC discovery and rotation mechanism for Gemini Models.
-    Fetches real-time model list from Google API, sorts by version/capability.
-    """
-    _client: Optional[genai.Client] = None
-    _cached_models: List[str] = []
-    _last_fetch_time: float = 0
-    _CACHE_DURATION = 3600  # Refresh model list every 1 hour
-
-    @classmethod
-    def _initialize_client(cls):
-        if not cls._client:
-            cls._client = genai.Client(api_key=Config.GEMINI_API_KEY)
-
-    @staticmethod
-    def _calculate_model_score(model_name: str) -> float:
-        """
-        Scoring algorithm to rank models based on freshness and capability.
-        Higher score = Higher priority in the chain.
-        """
-        score = 0.0
-        
-        # 1. Extract Version (e.g., 2.0, 1.5, 1.0)
-        version_match = re.search(r'gemini-(\d+\.?\d*)', model_name)
-        if version_match:
-            score += float(version_match.group(1)) * 100  # Major weight on version
-
-        # 2. Capability Hierarchy
-        if "pro" in model_name:
-            score += 10  # Prefer Pro for reasoning
-        elif "flash" in model_name:
-            score += 5   # Prefer Flash for speed/cost if Pro matches
-        elif "ultra" in model_name:
-            score += 20  # Ultra is top tier if available
-            
-        # 3. Recency / Experimental Preference
-        # If user wants the absolute latest, experimental models often have newer features.
-        if "exp" in model_name or "preview" in model_name:
-            score += 1   # Slight boost to break ties with stable versions if versions are equal
-            
-        # 4. Demote Embedding/Vision-only models (Safety filter)
-        if "vision" in model_name and "pro" not in model_name: # Simple filter, logic can be refined
-            score -= 500
-            
-        return score
-
-    @classmethod
-    def _fetch_and_rank_models(cls) -> List[str]:
-        """
-        Queries Google API for ALL available models and sorts them.
-        """
-        cls._initialize_client()
-        try:
-            logger.info("📡 Contacting Google API for latest model list...")
-            all_models_raw = list(cls._client.models.list())
-            
-            # Filter only generative Gemini models (exclude embedding, aqa, etc.)
-            # The API returns objects, we need the 'name' attribute which usually looks like 'models/gemini-1.5-pro'
-            gemini_models = [
-                m.name.replace('models/', '') 
-                for m in all_models_raw 
-                if 'gemini' in m.name and 'embedding' not in m.name
-            ]
-            
-            if not gemini_models:
-                logger.warning("⚠️ No models found via API. Using fallback list.")
-                return ["gemini-1.5-pro", "gemini-1.5-flash"]
-
-            # Sort based on our scoring algorithm (Highest score first)
-            sorted_models = sorted(gemini_models, key=cls._calculate_model_score, reverse=True)
-            
-            logger.info(f"✅ Discovered & Ranked Models: {sorted_models}")
-            return sorted_models
-
-        except Exception as e:
-            logger.error(f"❌ Model discovery failed: {e}")
-            # Fallback if API list fails
-            return ["gemini-1.5-pro", "gemini-1.5-flash", "gemini-1.0-pro"]
-
-    @classmethod
-    def get_models(cls) -> List[str]:
-        current_time = time.time()
-        # Refresh cache if empty or expired
-        if not cls._cached_models or (current_time - cls._last_fetch_time > cls._CACHE_DURATION):
-            cls._cached_models = cls._fetch_and_rank_models()
-            cls._last_fetch_time = current_time
-        return cls._cached_models
-
-    @classmethod
-    def get_client(cls):
-        cls._initialize_client()
-        return cls._client
-
-class StrategyEngine:
-    @staticmethod
-    def construct_system_prompt(persona: dict) -> str:
-        return f"""
-You are {persona['role']}.
-Style: {persona['style']}
-Mission: {persona['directive']}
-
-{X_ALGO_WEIGHTS}
-
-CRITICAL RULES:
-1. DO NOT ALWAYS ASK QUESTIONS. Analyze the input. If it's technical, provide a solution (Dwell Time). If it's news, state an opinion (Retweet).
-2. NO GENERIC AI SLOP. No "Here is a tweet", "Buckle up", "Let's dive in". Just the content.
-3. OUTPUT FORMAT: strict JSON only.
-"""
-
-    @staticmethod
-    def construct_user_prompt(context_text: str) -> str:
-        return f"""
-INPUT CONTEXT:
-"{context_text[:3000]}"
-
-TASK:
-Generate 3 distinct tweet options based on the input.
-1. Option 1: Optimize for REPLY_WEIGHT (Question/Debate).
-2. Option 2: Optimize for DWELL_TIME (Deep dive/Technical insight/Thread-hook).
-3. Option 3: Optimize for RETWEET_WEIGHT (High signal/News/Meme-able).
-
-JSON OUTPUT STRUCTURE:
-{{
-  "analysis": "Brief reasoning of input topic.",
-  "options": [
-    {{
-      "type": "High Reply",
-      "content": "..."
-    }},
-    {{
-      "type": "High Dwell Time",
-      "content": "..."
-    }},
-    {{
-      "type": "High Retweet",
-      "content": "..."
-    }}
-  ]
-}}
-"""
 
 def analyze_and_draft(user_input: str) -> str:
     """
@@ -195,52 +54,110 @@ def analyze_and_draft(user_input: str) -> str:
     clean_input = re.sub(r'@pepetopia(_dev)?', '', user_input, flags=re.IGNORECASE).strip()
     enriched_context = extract_url_content(clean_input) or clean_input
 
-    # Get dynamically fetched models
-    models = ModelChain.get_models()
-    client = ModelChain.get_client()
+    # Prepare Context
+    tweet_context = TweetContext(
+        text=enriched_context,
+        author="Unknown User", 
+        topic=None, 
+        sentiment=None 
+    )
     
-    system_instruction = StrategyEngine.construct_system_prompt(persona_data)
-    prompt = StrategyEngine.construct_user_prompt(enriched_context)
+    # helper to clean simple markdown code blocks if LLM outputs them despite strict JSON
+    def clean_json_string(s: str) -> str:
+        s = s.strip()
+        if s.startswith("```json"):
+            s = s[7:]
+        if s.startswith("```"):
+            s = s[3:]
+        if s.endswith("```"):
+            s = s[:-3]
+        return s.strip()
 
-    for model_name in models:
+    prompt_builder = PromptBuilder()
+    system_instruction = prompt_builder.build_system_prompt(persona_data)
+    user_prompt = prompt_builder.build_user_prompt(tweet_context)
+
+    # Use Centralized GeminiService
+    if GeminiService:
+        # Since analyze_and_draft is ostensibly sync in this signature (based on previous code),
+        # but GeminiService is async, we need to run it.
+        # HOWEVER, the calling code in ai_chat.py now calls it via await asyncio.to_thread.
+        # But wait, asyncio.to_thread runs a sync function in a thread. 
+        # Inside that sync function, we can't easily await... unless we create a new event loop or run_until_complete?
+        # NO. The calling code `ai_chat.py` does: `ai_response = await asyncio.to_thread(analyze_and_draft, cleaned_text)`
+        # This implies `analyze_and_draft` MUST BE SYNCHRONOUS.
+        # But `GeminiService._generate_with_retry` is ASYNC.
+        
+        # FIX: We should use `asyncio.run()` or similar if we are in a thread?
+        # OR better: make `analyze_and_draft` async?
+        # But if I make it async, `ai_chat.py` calling `asyncio.to_thread(analyze_and_draft...)` will return a coroutine, not result.
+        
+        # User requested: "update analyze_and_draft ... use GeminiService"
+        # Strategy: 
+        # Option 1: Convert `analyze_and_draft` to async. Update `ai_chat.py` to just `await analyze_and_draft(...)`.
+        # Option 2: Keep `analyze_and_draft` sync and use `asyncio.run()` inside it.
+        
+        # Given `ai_chat.py` is under my control and I just updated it, Option 1 is cleaner.
+        # BUT `ai_chat.py` is ALREADY updated to use `await asyncio.to_thread(analyze_and_draft, cleaned_text)`.
+        # If I change `analyze_and_draft` to async, I must update `ai_chat.py` to `await analyze_and_draft(...)` directly.
+        # The user said "Update Twitter Bot Engine".
+        
+        # Let's try to make `analyze_and_draft` synchronous wrapper around async call for now because I can't easily change `ai_chat.py` in the same step easily (different file).
+        # Actually I can update `ai_chat.py` in next step if needed. 
+        # But `asyncio.run()` might fail if there is already a loop?
+        # `asyncio.to_thread` runs in a separate thread. `asyncio.run` creates a new loop. This should work in a thread.
+        
         try:
-            logger.info(f"⚡ Attempting generation with: {model_name} [{persona_key.upper()}]")
-            
-            response = client.models.generate_content(
-                model=model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    response_mime_type="application/json",
-                    temperature=0.7 
+            # We are likely running in a thread (via ai_chat.py).
+            # So we need a loop.
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            response_text, model_name = loop.run_until_complete(
+                GeminiService._generate_with_retry(
+                    prompt=user_prompt,
+                    system_instruction=system_instruction
                 )
             )
+            loop.close()
             
-            result_json = json.loads(response.text)
-            return format_response(result_json, model_name, persona_key)
+            result_text = clean_json_string(response_text)
+            try:
+                result_json = json.loads(result_text)
+                return format_response(result_json, model_name, persona_key)
+            except json.JSONDecodeError:
+                logger.error(f"JSON Decode Error. Raw: {result_text}")
+                return f"⚠️ JSON Error from {model_name}. Raw: {result_text}"
 
         except Exception as e:
-            logger.warning(f"⚠️ Model {model_name} failed/exhausted. Error: {e}")
-            logger.info("🔄 Switching to next available model in chain...")
-            continue 
-            
-    return "🚫 SYSTEM FAILURE: All AI models are currently unavailable. Please try again later."
+            logger.error(f"GeminiService call failed: {e}")
+            return f"⚠️ Engine Error: {e}"
+    else:
+        return "🚫 Service Integration Error: GeminiService not found."
 
 def format_response(data: dict, model_name: str, persona_key: str) -> str:
+    """
+    Formats the JSON response into a human-readable/Telegram-ready string.
+    """
     header_icon = "👨‍💻" if persona_key == "dev" else "🔮"
     header_title = "ARCHITECT OUTPUT" if persona_key == "dev" else "VISIONARY OUTPUT"
     
-    output = [f"{header_icon} *{header_title}*"]
-    output.append(f"_{data.get('analysis', 'Analysis complete.')}_")
-    output.append("")
+    analysis = data.get('analysis', {})
+    viral_score = data.get('viral_score', 0)
+    reply_text = data.get('reply_text', "No reply generated.")
     
-    options = data.get("options", [])
-    for i, opt in enumerate(options, 1):
-        strategy = opt.get('type', 'General')
-        content = opt.get('content', '')
-        output.append(f"*{i}. Strategy: {strategy}*")
-        output.append(f"`{content}`")
-        output.append("")
+    # Viral Score Icon
+    score_icon = "🔴"
+    if viral_score >= 90: score_icon = "🔥"
+    elif viral_score >= 75: score_icon = "🟢"
+    elif viral_score >= 50: score_icon = "🟡"
 
+    output = [f"{header_icon} *{header_title}*"]
+    output.append(f"_{analysis.get('context_thought', 'Analysis complete.')}_")
+    output.append(f"📊 Viral Score: {score_icon} {viral_score}/100")
+    output.append("")
+    output.append("*Draft Reply:*")
+    output.append(f"`{reply_text}`")
+    output.append("")
     output.append(f"⚙️ _Engine: {model_name}_")
+    
     return "\n".join(output)
