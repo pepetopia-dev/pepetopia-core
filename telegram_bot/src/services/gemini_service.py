@@ -111,19 +111,15 @@ class GeminiService:
             cls._available_models = ["models/gemini-1.5-flash"]
 
     @classmethod
-    async def _generate_with_retry(cls, prompt: str, temperature: float = 0.8, system_instruction: str = None) -> tuple[str, str]:
+    async def _generate_with_retry(cls, prompt: str, temperature: float = 0.8) -> str:
         """
         THE SURVIVAL LOOP:
         Iterates through the model chain. On 429 (Quota) error, retries immediately with next model.
-        Returns: (response_text, model_name_used)
         """
         if not cls._available_models:
             cls.initialize()
 
         last_error = None
-        
-        # Use provided system instruction or fall back to TOPI default
-        active_instruction = system_instruction if system_instruction else cls.TOPI_SYSTEM_INSTRUCTION
 
         for i, model_name in enumerate(cls._available_models):
             try:
@@ -134,7 +130,7 @@ class GeminiService:
 
                 model = genai.GenerativeModel(
                     model_name=model_name,
-                    system_instruction=active_instruction,
+                    system_instruction=cls.TOPI_SYSTEM_INSTRUCTION,
                     # tools=tools 
                 )
                 
@@ -148,7 +144,7 @@ class GeminiService:
                 )
                 
                 if response.text:
-                    return response.text, model_name
+                    return response.text
 
             except (ResourceExhausted, InternalServerError, ServiceUnavailable) as e:
                 logger.warning(f"⚠️ Quota Hit/Server Error on {model_name}. Switching... ({e})")
@@ -166,13 +162,12 @@ class GeminiService:
                 continue
 
         logger.critical(f"💀 All AI models failed. Last Error: {last_error}")
-        return "🐸 My brain is buffering... (Global neural outage, please try again in 5 mins.)", "None"
+        return "🐸 My brain is buffering... (Global neural outage, please try again in 5 mins.)"
 
     @classmethod
     async def get_response(cls, user_text: str):
         """Chat wrapper."""
-        text, _ = await cls._generate_with_retry(user_text, temperature=0.9)
-        return text
+        return await cls._generate_with_retry(user_text, temperature=0.9)
 
     @classmethod
     async def summarize_news(cls, news_title: str, news_source: str):
@@ -182,8 +177,7 @@ class GeminiService:
             "1. If it's minor noise/spam -> Reply 'SKIP'.\n"
             "2. If important -> Summarize in 1 exciting sentence (Detect Language: Use the same language as the news title)."
         )
-        text, _ = await cls._generate_with_retry(prompt, temperature=0.5)
-        return text
+        return await cls._generate_with_retry(prompt, temperature=0.5)
 
     @classmethod
     async def generate_daily_digest(cls, news_list):
@@ -197,8 +191,7 @@ class GeminiService:
             "2. TONE: Witty, energetic, use emojis.\n"
             "3. FORMAT: Bullet points with bold headers. Keep it concise."
         )
-        text, _ = await cls._generate_with_retry(prompt, temperature=0.7)
-        return text
+        return await cls._generate_with_retry(prompt, temperature=0.7)
 
     @classmethod
     async def generate_flash_update(cls, news_item):
@@ -219,5 +212,4 @@ class GeminiService:
             "   🇪🇸 [Spanish Summary]\n"
             "4. CONSTRAINT: Keep it under 280 characters total. No English output."
         )
-        text, _ = await cls._generate_with_retry(prompt, temperature=0.8)
-        return text
+        return await cls._generate_with_retry(prompt, temperature=0.8)
