@@ -1,22 +1,15 @@
 import logging
 import re
 import json
-import asyncio
-from typing import Dict, Optional
+from typing import Dict, Tuple
 
-# --- DÜZELTME: Doğrudan aynı klasörden import ediyoruz ---
-try:
-    from .gemini_service import GeminiService
-except ImportError as e:
-    # Hata durumunda log basalım ama kodun çökmesini engelleyelim
-    logging.error(f"CRITICAL: Could not import GeminiService. Error: {e}")
-    GeminiService = None
-
+# Import services
+from .gemini_service import GeminiService
 from .app_config import Config
 from .utils import extract_url_content
 from .prompt_builder import PromptBuilder, TweetContext
 
-# Logger yapılandırması
+# Logger configuration
 logger = logging.getLogger(__name__)
 
 class PersonaManager:
@@ -26,110 +19,124 @@ class PersonaManager:
     PERSONAS = {
         "dev": {
             "role": "SENIOR SOFTWARE ARCHITECT (@pepetopia_dev)",
-            "style": "Technical, terse, authoritative, code-centric. Uses jargon correctly.",
-            "directive": "Focus on implementation details, performance metrics, and architectural implications."
+            "style": "Technical, terse, authoritative, code-centric. Uses jargon (Rust, Solana, TPS) correctly. Skeptical optimization focus.",
+            "directive": "Focus on implementation details, security, and architectural implications."
         },
         "brand": {
             "role": "ECOSYSTEM VISIONARY (@pepetopia)",
-            "style": "Inspiring, high-status, community-focused, forward-looking.",
+            "style": "Inspiring, high-status, community-focused, forward-looking. Uses emoji sparingly but effectively.",
             "directive": "Focus on the big picture, market impact, and community growth."
         }
     }
 
     @staticmethod
-    def get_persona(input_text: str) -> tuple[str, dict]:
+    def get_persona(input_text: str) -> Tuple[str, dict]:
+        # Check for the specific trigger handle
         if "@pepetopia_dev" in input_text.lower():
             return "dev", PersonaManager.PERSONAS["dev"]
         return "brand", PersonaManager.PERSONAS["brand"]
 
-def analyze_and_draft(user_input: str) -> str:
-    """
-    Main orchestrator function.
-    """
-    # Servis kontrolü
-    if not GeminiService:
-        return "🚫 **System Error:** GeminiService module is missing or failed to load."
+def clean_json_string(s: str) -> str:
+    """Helper to clean markdown code blocks from LLM response."""
+    s = s.strip()
+    if s.startswith("```json"): s = s[7:]
+    elif s.startswith("```"): s = s[3:]
+    if s.endswith("```"): s = s[:-3]
+    return s.strip()
 
+async def analyze_and_draft(user_input: str) -> str:
+    """
+    Main orchestrator function (Async).
+    """
+    # Service check
+    # Note: We assume GeminiService is available. If imports fail, this will crash early (good for debugging).
+    
+    # 1. Determine Persona
     persona_key, persona_data = PersonaManager.get_persona(user_input)
     
-    # Kullanıcı adını temizle ve link varsa içeriğini çek
+    # 2. Pre-process Input (Remove trigger, fetch URL content)
     clean_input = re.sub(r'@pepetopia(_dev)?', '', user_input, flags=re.IGNORECASE).strip()
     enriched_context = extract_url_content(clean_input) or clean_input
 
-    # Context hazırla
+    # 3. Build Context
     tweet_context = TweetContext(
         text=enriched_context,
-        author="Unknown User", 
+        author="User", 
         topic=None, 
         sentiment=None 
     )
     
-    # JSON temizleme yardımcısı
-    def clean_json_string(s: str) -> str:
-        s = s.strip()
-        if s.startswith("```json"): s = s[7:]
-        elif s.startswith("```"): s = s[3:]
-        if s.endswith("```"): s = s[:-3]
-        return s.strip()
-
+    # 4. Build Prompts
     prompt_builder = PromptBuilder()
     system_instruction = prompt_builder.build_system_prompt(persona_data)
     user_prompt = prompt_builder.build_user_prompt(tweet_context)
 
     try:
-        # Senkron fonksiyonda asenkron kodu çalıştırma yaması (Patch)
-        # Main.py'de thread içinde çağrıldığı için yeni bir event loop gerekebilir.
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-        # Gemini servisini çağır
-        response_text, model_name = loop.run_until_complete(
-            GeminiService._generate_with_retry(
-                prompt=user_prompt,
-                system_instruction=system_instruction
-            )
+        # 5. Call LLM (Async)
+        # We await directly here, removing the need for internal event loops.
+        response_text, model_name = await GeminiService._generate_with_retry(
+            prompt=user_prompt,
+            system_instruction=system_instruction
         )
         
-        # Sonucu işle
+        # 6. Parse and Format
         result_text = clean_json_string(response_text)
         try:
             result_json = json.loads(result_text)
-            return format_response(result_json, model_name, persona_key)
+            return format_response_html(result_json, model_name, persona_key)
         except json.JSONDecodeError:
             logger.error(f"JSON Decode Error. Raw: {result_text}")
-            return f"⚠️ JSON Error from {model_name}. Raw response was invalid."
+            return f"⚠️ <b>JSON Hatası:</b> Model geçersiz format üretti.<br>Model: {model_name}"
 
     except Exception as e:
-        logger.error(f"GeminiService call failed: {e}")
-        return f"⚠️ Engine Error: {e}"
+        logger.error(f"Engine Error: {e}")
+        return f"⚠️ <b>Kritik Hata:</b> {str(e)}"
 
-def format_response(data: dict, model_name: str, persona_key: str) -> str:
+def format_response_html(data: dict, model_name: str, persona_key: str) -> str:
     """
-    Formats the JSON response into a human-readable/Telegram-ready string.
+    Formats the JSON response into Telegram-friendly HTML.
+    Supports 3 distinct reply options.
     """
-    header_icon = "👨‍💻" if persona_key == "dev" else "🔮"
-    header_title = "ARCHITECT OUTPUT" if persona_key == "dev" else "VISIONARY OUTPUT"
+    # Header Icons & Titles
+    if persona_key == "dev":
+        header = "👨‍💻 <b>MÜHENDİS MODU</b>"
+    else:
+        header = "🔮 <b>VİZYONER (CEO) MODU</b>"
     
     analysis = data.get('analysis', {})
     viral_score = data.get('viral_score', 0)
-    reply_text = data.get('reply_text', "No reply generated.")
+    replies = data.get('replies', [])
     
-    # Viral Score Icon
-    score_icon = "🔴"
+    # Viral Score Indicator
     if viral_score >= 90: score_icon = "🔥"
     elif viral_score >= 75: score_icon = "🟢"
     elif viral_score >= 50: score_icon = "🟡"
+    else: score_icon = "🔴"
 
-    output = [f"{header_icon} *{header_title}*"]
-    output.append(f"_{analysis.get('context_thought', 'Analysis complete.')}_")
-    output.append(f"📊 Viral Score: {score_icon} {viral_score}/100")
+    # Build HTML Output
+    output = []
+    output.append(header)
+    output.append(f"📊 <b>Viral Puanı:</b> {score_icon} {viral_score}/100")
+    output.append(f"💡 <i>{analysis.get('context_thought', 'Analiz tamamlandı.')}</i>")
+    output.append("") # Spacer
+    
+    output.append("<b>📝 TASLAK CEVAPLAR (İngilizce):</b>")
     output.append("")
-    output.append("*Draft Reply:*")
-    output.append(f"`{reply_text}`")
-    output.append("")
-    output.append(f"⚙️ _Engine: {model_name}_")
+    
+    # Loop through the 3 replies
+    if isinstance(replies, list):
+        for i, reply in enumerate(replies, 1):
+            r_type = reply.get('type', f'Option {i}')
+            r_text = reply.get('text', 'No text generated.')
+            
+            output.append(f"<b>{i}. {r_type}</b>")
+            # Using <code> tag for easy copy-pasting in Telegram
+            output.append(f"<code>{r_text}</code>")
+            output.append("") # Spacer
+    else:
+        # Fallback for old/wrong format
+        output.append(f"<code>{data.get('reply_text', 'Error parsing replies.')}</code>")
+
+    output.append(f"⚙️ <span class='tg-spoiler'>Model: {model_name}</span>")
     
     return "\n".join(output)

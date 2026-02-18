@@ -1,32 +1,62 @@
-# X (Twitter) Algorithm Optimization Rules
+# X-like Multi-Action Scoring Proxy (Based on xai-org/x-algorithm README)
 
-## 1. Ranking Signals (from Source Code)
+## What the open-source README tells us
+X’s "For You" feed ranking is described as:
+- Predict probabilities for multiple engagement actions (reply, repost, quote, click, dwell, etc.)
+- Combine them as a weighted sum
+- Apply filtering before and after scoring
 
-### Conversation Weight
-**The algorithm prioritizes replies that spark a conversation.** (Source: threaded_conversation_scorer).
-*   **Action:** End replies with an open-ended question or a controversial take to provoke a response.
+We don’t have the production weights or model, so we implement a proxy.
 
-### SimClusters (Topic Relevance)
-**Users and Tweets are clustered.** (Source: sim_clusters).
-*   **Action:** Stay strictly within the niche (Crypto/Tech). Using keywords outside the cluster reduces visibility.
+## Proxy Goals
+- Optimize for conversation and shareability (replies, reposts, quotes)
+- Maintain credibility and avoid negative outcomes (not interested / report vibe)
+- Avoid spam and templated replies
 
-### Reputation Penalty
-**Low-quality interactions lower the user's reputation score.** (Source: reputation_scorer).
-*   **Action:** Avoid generic comments like 'Great project!'. They look like spam bot behavior.
+## Engagement Actions We Approximate
+We model these as heuristic components:
 
-## 2. Viral Score Logic (0-100)
+Positive intent:
+- Reply-likelihood: Does it invite a response naturally?
+- Repost/quote-likelihood: Would someone share it because it’s crisp or insightful?
+- Click/profile-likelihood: Does it create curiosity without bait?
+- Dwell: Is it interesting enough to pause and read?
 
-*   **< 50 (Reject):** Generic, short, agrees without adding value.
-*   **50-75 (Safe):** Good format, relevant, but lacks a hook.
-*   **75-90 (Growth):** Provocative, uses data/chart reference, strictly targeted to the niche.
-*   **90+ (Viral):** Strong emotional trigger (Humor/Shock/Insight), perfect formatting, highly likely to get a Reply from the OP.
+Negative risk:
+- Not-interested vibe: generic/irrelevant/low-value
+- Report vibe: hostility, harassment, misinformation tone
+- Block/mute vibe: overly aggressive, spammy, repetitive
 
-## 3. Persona Guidelines
+## Scoring Components (0–10 each)
+- relevance: directly addresses the tweet’s point
+- hook: strong first sentence
+- clarity: readable, tweet-length, clean structure
+- novelty: not generic, not template
+- conversation_invite: good question or prompt
+- credibility: no invented claims
+- persona_fit: CEO vs Engineer voice match
+- shareability: quotable / concise / insightful
+- safety: avoids risky language and advice
 
-### CEO
-*   **Focus:** Macro-economics, strategy, partnership, and 'Alpha'.
-*   **Tone:** Confident, terse.
+## Penalties (0–30 each)
+- promo: forced Pepetopia mention / “bio” / selling
+- repetition: same cadence across candidates
+- hallucination_risk: numbers/claims without support
+- finance_advice: price talk, buy/sell instructions
+- hostility: rage-bait / insulting tone
 
-### ENGINEER
-*   **Focus:** Technical implementation, solidity/rust code, security, and optimization.
-*   **Tone:** Skeptical, detailed.
+## Total Score (0–100)
+score_total = base_score - penalties
+Where base_score is a weighted sum of the 0–10 components.
+
+## Candidate Diversity Enforcement
+Generate 5–8 candidates with:
+- distinct angles (question-first, contrarian, mini-tutorial, witty, supportive)
+- distinct structure (one-liner vs two-liner vs micro-bullets)
+- distinct hooks
+
+## Output JSON Contract (internal)
+The LLM must return STRICT JSON (no extra text):
+- analysis: {topic, intent, tone, audience_hint}
+- candidates: [{id, angle, reply_text_en, score_total, score_breakdown, penalties, rationale_en, risk_flags}]
+- recommended_id

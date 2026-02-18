@@ -46,6 +46,24 @@ class TestGeminiFallback(unittest.IsolatedAsyncioTestCase):
         
         mock_generate = AsyncMock(side_effect=[exception_429, mock_response])
         
+        # Mock models.list() to return successful model discovery
+        mock_model_1 = MagicMock()
+        mock_model_1.name = "models/gemini-2.0-flash"
+        mock_model_1.supported_generation_methods = ["generateContent"]
+
+        mock_model_2 = MagicMock()
+        mock_model_2.name = "models/gemini-1.5-flash"
+        mock_model_2.supported_generation_methods = ["generateContent"]
+
+        # .list() is async, so it should be an AsyncMock or return a future
+        # But wait, logic calls 'await client.aio.models.list()'. 
+        # So client.aio.models.list MUST be an AsyncMock or return a value if it is already awaited?
+        # Check gemini_service: await client.aio.models.list()
+        # So we set mock_list as AsyncMock
+        
+        mock_list = AsyncMock(return_value=[mock_model_1, mock_model_2])
+        mock_models.list = mock_list
+        
         mock_models.generate_content = mock_generate
         mock_aio.models = mock_models
         mock_client.aio = mock_aio
@@ -56,7 +74,8 @@ class TestGeminiFallback(unittest.IsolatedAsyncioTestCase):
         # Execute
         response_text, model_name = await GeminiService._generate_with_retry("test prompt", "system prompt")
         
-        print(f"Result: Model={model_name}, Response={response_text}")
+        # Encode output to avoid console errors on Windows
+        print(f"Result: Model={model_name}, Response={response_text.encode('ascii', 'ignore').decode()}")
         
         # Assertions
         self.assertEqual(model_name, "gemini-1.5-flash")
